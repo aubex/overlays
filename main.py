@@ -210,6 +210,7 @@ class OverlayManager:
     def _run_pipe_server(self) -> None:
         """Named pipe server thread function."""
         logger.info("Starting named pipe server on %s", self.pipe_name)
+        print(f"🔌 Named pipe server starting on {self.pipe_name}")
 
         while not self.shutdown_event.is_set():
             try:
@@ -238,6 +239,7 @@ class OverlayManager:
                 try:
                     win32pipe.ConnectNamedPipe(pipe_handle, None)
                     logger.info("Client connected to named pipe")
+                    print("👤 Client connected to named pipe")
 
                     # Handle client communication
                     self._handle_pipe_client(pipe_handle)
@@ -245,9 +247,11 @@ class OverlayManager:
                 except pywintypes.error as e:
                     if e.winerror == ERROR_NO_DATA:
                         logger.debug("Client disconnected")
+                        print("👋 Client disconnected")
                     else:
                         msg = f"Pipe connection error: {e}"
                         logger.exception(msg)
+                        print(f"❌ Pipe connection error: {e}")
 
                 finally:
                     with contextlib.suppress(Exception):
@@ -422,6 +426,7 @@ class OverlayManager:
                                     logger.debug(
                                         "Processing cancel_break during break mode"
                                     )
+                                    print("🔄 Break cancelled (was active)")
                                     # Reset the break timer to immediately end the break
                                     break_until = 0
                                     # Send confirmation back
@@ -461,6 +466,7 @@ class OverlayManager:
                     if command == "take_break":
                         _, duration_seconds = request
                         logger.debug("Taking a break for %s seconds", duration_seconds)
+                        print(f"☕ Taking a break for {duration_seconds} seconds")
                         # Set the break duration
                         break_until = time.time() + duration_seconds
                         # Send confirmation back
@@ -470,11 +476,13 @@ class OverlayManager:
                         logger.debug(
                             "Canceling break command received (but no active break)"
                         )
+                        print("🔄 Break cancelled")
                         # No active break to cancel, but still send a confirmation
                         self.response_queue.put("break_canceled")
 
                     elif command == "create_countdown":
                         _, message_text, countdown_seconds = request
+                        print(f"⏰ Creating countdown window: '{message_text}' ({countdown_seconds}s)")
                         window = CountdownWindow(
                             message_text, countdown_seconds, window_manager
                         )
@@ -484,11 +492,13 @@ class OverlayManager:
 
                     elif command == "create_highlight":
                         _, rect, timeout_seconds = request
+                        print(f"🔍 Creating highlight window: {rect} ({timeout_seconds}s)")
                         window = HighlightWindow(rect, timeout_seconds, window_manager)
                         window.create_window()
 
                     elif command == "create_elapsed":
                         _, message_text = request
+                        print(f"⏱️ Creating elapsed time window: '{message_text}' (ID: {next_window_id})")
                         window = ElapsedTimeWindow(message_text, window_manager)
                         window.set_resources(thread_hdc, thread_font)
                         window_manager.active_windows.append(window)
@@ -507,6 +517,7 @@ class OverlayManager:
                     elif command == "close_window":
                         _, window_id = request
                         logger.debug("Attempting to close window %s", window_id)
+                        print(f"❌ Closing window ID: {window_id}")
                         if window_id in window_map:
                             window = window_map[window_id]
                             logger.debug("Found window in map")
@@ -1159,12 +1170,22 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:  # noqa: ARG001
 
 
 def main() -> None:
+    print("🔧 OverlayManager - Windows Overlay Application")
+    print("================================================")
+    
     # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
     signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
+    print("✅ Signal handlers configured")
 
     # Create and start your overlay manager
+    print("🚀 Starting OverlayManager...")
     overlay_manager = OverlayManager()
+    print("✅ OverlayManager initialized successfully")
+    print(f"📡 Named pipe server: {overlay_manager.pipe_name}")
+    print("🎯 Application ready - overlay windows can now be created")
+    print("💡 Press Ctrl+C to shutdown gracefully")
+    print()
 
     try:
         # Keep the main thread alive
@@ -1175,7 +1196,9 @@ def main() -> None:
         print("\nShutting down gracefully...")  # noqa: T201
     finally:
         # Clean up resources if needed
+        print("🧹 Cleaning up resources...")
         overlay_manager.shutdown()
+        print("👋 OverlayManager shutdown complete")
 
 
 if __name__ == "__main__":
