@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "pywin32>=310",
+    "qrcode>=8.2",
 ]

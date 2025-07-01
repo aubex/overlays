@@ -12,7 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from types import FrameType
 from typing import ClassVar
-
+import qrcode
+import json
 import pywintypes
 import win32api
 import win32con
@@ -82,6 +83,19 @@ class OverlayManager:
 
         """
         self.command_queue.put(("create_countdown", message_text, countdown_seconds))
+
+    def create_qrcode_window(
+        self, data: str | dict, duration: int = 5, caption: str | None = None
+    ) -> None:
+        """
+        Display metadata as a QR code for a limited time.
+        
+        Args:
+            data (str | dict): QR code content
+            duration (int): Duration of the QR code
+            caption (str | None): Optional caption text
+        """
+        self.command_queue.put(("create_qrcode", data, duration, caption))
 
     def create_highlight_window(
         self,
@@ -343,6 +357,14 @@ class OverlayManager:
                     "status": "error",
                     "message": "Failed to create elapsed time window",
                 }
+            
+            if command == "create_qrcode_window":
+                data = args.get("data", "")
+                duration = args.get("duration", "")
+                caption = args.get("caption", "")
+                control = self.create_qrcode_window(data, duration, caption)
+                {"status": "success", "message": "QR code window created"}
+
 
             if command == "close_window":
                 window_id = args.get("window_id")
@@ -541,6 +563,13 @@ class OverlayManager:
                                 window_manager.active_windows.remove(window)
                             del window_map[window_id]
                             window_manager.realign_windows()
+                    elif command == "create_qrcode":
+                        _, metadata, timeout, caption = request
+                        window = QRCodeWindow(metadata, timeout, window_manager, caption)
+                        print(f"🔍 Creating QR code window: (Duration: {timeout}s)")
+                        window.set_resources(thread_hdc, thread_font)
+                        window_manager.active_windows.append(window)
+                        window_manager.realign_windows()
 
                     # Clean up closed windows
                     closed_ids = []
@@ -1096,6 +1125,118 @@ class ElapsedTimeWindow(BaseWindow):
             hwnd (int): Window handle
 
         """
+        self.manager.remove_window(self)
+
+class QRCodeWindow(BaseWindow):
+    def __init__(
+        self,
+        metadata: str | dict,
+        timeout_seconds: int,
+        manager: "WindowManager",
+        caption: str | None = None,
+    ) -> None:
+        """Initializes a QR Code window."""
+        self.metadata = metadata
+        self.timeout = timeout_seconds
+        self.manager = manager
+        self.caption = caption or ""
+        self._prepare_qr_code()
+        super().__init__(f"QRCodeWindow_{id(self)}")
+
+    def _prepare_qr_code(self) -> None:
+        data = self.metadata if isinstance(self.metadata, str) else json.dumps(self.metadata)
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=1,
+            border=4,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+        self.matrix = qr.get_matrix()
+        self.module_count = len(self.matrix)
+        self.pix_per_module = 6
+        self.qr_size = self.module_count * self.pix_per_module
+        self.padding = 10
+
+    def create_window(self, x: int = 0, y: int = 0) -> None:
+        caption_h = 0
+        caption_w = 0
+        if self.caption:
+            caption_w, caption_h = measure_text(
+                self.hdc,
+                self.caption,
+                max_width=self.qr_size,
+                font=self.font,
+            )
+
+        # Computation of window dimensions
+        win_w = max(self.qr_size, caption_w) + 2 * self.padding
+        extra_gap = self.padding if self.caption else 0
+        win_h = self.padding + self.qr_size + extra_gap + caption_h + self.padding
+
+        if self.caption:
+            self._caption_rect = (
+                self.padding,
+                self.padding + self.qr_size + extra_gap,
+                win_w - self.padding,
+                self.padding + self.qr_size + extra_gap + caption_h,
+            )
+
+        # X- and Y-Position
+        screen_x = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+        if x == 0 and y == 0:
+            x = (screen_x - win_w) // 2
+            y = 20 + len(self.manager.active_windows) * (win_h + 10)
+
+        ex_style = (
+            win32con.WS_EX_TOPMOST
+            | win32con.WS_EX_LAYERED
+            | win32con.WS_EX_TRANSPARENT
+            | win32con.WS_EX_NOACTIVATE
+            | win32con.WS_EX_TOOLWINDOW
+        )
+        style = win32con.WS_POPUP
+
+        self.create_base_window(x, y, win_w, win_h, ex_style, style)
+        set_layered_window_attributes(self.hwnd, 255)
+        win32gui.ShowWindow(self.hwnd, win32con.SW_SHOWNORMAL)
+        win32gui.UpdateWindow(self.hwnd)
+        self.set_timer(1, 1000)
+
+    def on_paint(self, hwnd: int) -> None:
+        def paint(dc: int) -> None:
+            # White background
+            rect = win32gui.GetClientRect(hwnd)
+            win32gui.FillRect(dc, rect, win32gui.GetStockObject(win32con.WHITE_BRUSH))
+
+            # Draw QR code
+            with GDIContext(dc):
+                for ry, row in enumerate(self.matrix):
+                    for cx, bit in enumerate(row):
+                        if not bit:
+                            continue
+                        x0 = self.padding + cx * self.pix_per_module
+                        y0 = self.padding + ry * self.pix_per_module
+                        x1 = x0 + self.pix_per_module
+                        y1 = y0 + self.pix_per_module
+                        pen = win32gui.CreatePen(win32con.PS_SOLID, 0, win32api.RGB(0, 0, 0))
+                        brush = win32gui.CreateSolidBrush(win32api.RGB(0, 0, 0))
+                        with GDIContext(dc, pen=pen, brush=brush):
+                            win32gui.Rectangle(dc, x0, y0, x1, y1)
+
+            # 3) draw the caption (if any), neatly centered in its rect
+            if self.caption:
+                draw_centered_text(dc, self._caption_rect, self.caption)
+
+        self.safe_paint(hwnd, paint)
+
+    def on_timer(self, hwnd: int) -> None:
+        self.timeout -= 1
+        if self.timeout <= 0:
+            win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+
+    def on_destroy(self, hwnd: int) -> None:  # noqa: ARG002
         self.manager.remove_window(self)
 
 
