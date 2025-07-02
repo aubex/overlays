@@ -13,14 +13,13 @@ from dataclasses import dataclass
 from types import FrameType
 from typing import ClassVar
 import qrcode
-import json
 import pywintypes
 import win32api
 import win32con
 import win32file
 import win32gui
 import win32pipe
-
+from typing import Self
 from helpers import (
     GDIContext,
     create_layered_window,
@@ -40,6 +39,13 @@ RECT_CORRECT_DIMENSIONS = 4
 
 
 class OverlayManager:
+    _instance: Self = None
+
+    def __new__(class_, *args, **kwargs):
+        if not isinstance(class_._instance, class_):
+            class_._instance = object.__new__(class_, *args, **kwargs)
+        return class_._instance
+
     def __init__(self, pipe_name: str = r"\\.\pipe\overlay_manager") -> None:
         """Initialize the OverlayManager instance with named pipe support."""
         self.command_queue = queue.Queue()
@@ -89,7 +95,7 @@ class OverlayManager:
     ) -> None:
         """
         Display metadata as a QR code for a limited time.
-        
+
         Args:
             data (str | dict): QR code content
             duration (int): Duration of the QR code
@@ -357,14 +363,13 @@ class OverlayManager:
                     "status": "error",
                     "message": "Failed to create elapsed time window",
                 }
-            
+
             if command == "create_qrcode_window":
                 data = args.get("data", "")
                 duration = args.get("duration", "")
                 caption = args.get("caption", "")
                 control = self.create_qrcode_window(data, duration, caption)
-                {"status": "success", "message": "QR code window created"}
-
+                return {"status": "success", "message": "QR code window created"}
 
             if command == "close_window":
                 window_id = args.get("window_id")
@@ -504,7 +509,9 @@ class OverlayManager:
 
                     elif command == "create_countdown":
                         _, message_text, countdown_seconds = request
-                        print(f"⏰ Creating countdown window: '{message_text}' ({countdown_seconds}s)")
+                        print(
+                            f"⏰ Creating countdown window: '{message_text}' ({countdown_seconds}s)"
+                        )
                         window = CountdownWindow(
                             message_text, countdown_seconds, window_manager
                         )
@@ -514,13 +521,17 @@ class OverlayManager:
 
                     elif command == "create_highlight":
                         _, rect, timeout_seconds = request
-                        print(f"🔍 Creating highlight window: {rect} ({timeout_seconds}s)")
+                        print(
+                            f"🔍 Creating highlight window: {rect} ({timeout_seconds}s)"
+                        )
                         window = HighlightWindow(rect, timeout_seconds, window_manager)
                         window.create_window()
 
                     elif command == "create_elapsed":
                         _, message_text = request
-                        print(f"⏱️ Creating elapsed time window: '{message_text}' (ID: {next_window_id})")
+                        print(
+                            f"⏱️ Creating elapsed time window: '{message_text}' (ID: {next_window_id})"
+                        )
                         window = ElapsedTimeWindow(message_text, window_manager)
                         window.set_resources(thread_hdc, thread_font)
                         window_manager.active_windows.append(window)
@@ -565,7 +576,9 @@ class OverlayManager:
                             window_manager.realign_windows()
                     elif command == "create_qrcode":
                         _, metadata, timeout, caption = request
-                        window = QRCodeWindow(metadata, timeout, window_manager, caption)
+                        window = QRCodeWindow(
+                            metadata, timeout, window_manager, caption
+                        )
                         print(f"🔍 Creating QR code window: (Duration: {timeout}s)")
                         window.set_resources(thread_hdc, thread_font)
                         window_manager.active_windows.append(window)
@@ -1127,6 +1140,7 @@ class ElapsedTimeWindow(BaseWindow):
         """
         self.manager.remove_window(self)
 
+
 class QRCodeWindow(BaseWindow):
     def __init__(
         self,
@@ -1144,7 +1158,11 @@ class QRCodeWindow(BaseWindow):
         super().__init__(f"QRCodeWindow_{id(self)}")
 
     def _prepare_qr_code(self) -> None:
-        data = self.metadata if isinstance(self.metadata, str) else json.dumps(self.metadata)
+        data = (
+            self.metadata
+            if isinstance(self.metadata, str)
+            else json.dumps(self.metadata)
+        )
         qr = qrcode.QRCode(
             version=None,
             error_correction=qrcode.constants.ERROR_CORRECT_M,
@@ -1220,7 +1238,9 @@ class QRCodeWindow(BaseWindow):
                         y0 = self.padding + ry * self.pix_per_module
                         x1 = x0 + self.pix_per_module
                         y1 = y0 + self.pix_per_module
-                        pen = win32gui.CreatePen(win32con.PS_SOLID, 0, win32api.RGB(0, 0, 0))
+                        pen = win32gui.CreatePen(
+                            win32con.PS_SOLID, 0, win32api.RGB(0, 0, 0)
+                        )
                         brush = win32gui.CreateSolidBrush(win32api.RGB(0, 0, 0))
                         with GDIContext(dc, pen=pen, brush=brush):
                             win32gui.Rectangle(dc, x0, y0, x1, y1)
@@ -1313,7 +1333,7 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:  # noqa: ARG001
 def main() -> None:
     print("🔧 OverlayManager - Windows Overlay Application")
     print("================================================")
-    
+
     # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
     signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
