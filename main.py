@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 ERROR_NO_DATA = 232  # client disconnected
 ERROR_BROKEN_PIPE = 109
 RECT_CORRECT_DIMENSIONS = 4
+TIMER_DURATION_MS = 100
+MAIN_LOOP_DURATION_SECONDS = 0.05
 
 
 class OverlayManager:
@@ -446,7 +448,9 @@ class OverlayManager:
 
                     # Get command from queue
                     try:
-                        request = self.command_queue.get(timeout=0.1)
+                        request = self.command_queue.get(
+                            timeout=MAIN_LOOP_DURATION_SECONDS
+                        )
                     except queue.Empty:
                         win32gui.PumpWaitingMessages()
                         continue
@@ -482,7 +486,9 @@ class OverlayManager:
 
                     elif command == "create_countdown":
                         _, message_text, countdown_seconds = request
-                        print(f"⏰ Creating countdown window: '{message_text}' ({countdown_seconds}s)")
+                        print(
+                            f"⏰ Creating countdown window: '{message_text}' ({countdown_seconds}s)"
+                        )
                         window = CountdownWindow(
                             message_text, countdown_seconds, window_manager
                         )
@@ -492,13 +498,17 @@ class OverlayManager:
 
                     elif command == "create_highlight":
                         _, rect, timeout_seconds = request
-                        print(f"🔍 Creating highlight window: {rect} ({timeout_seconds}s)")
+                        print(
+                            f"🔍 Creating highlight window: {rect} ({timeout_seconds}s)"
+                        )
                         window = HighlightWindow(rect, timeout_seconds, window_manager)
                         window.create_window()
 
                     elif command == "create_elapsed":
                         _, message_text = request
-                        print(f"⏱️ Creating elapsed time window: '{message_text}' (ID: {next_window_id})")
+                        print(
+                            f"⏱️ Creating elapsed time window: '{message_text}' (ID: {next_window_id})"
+                        )
                         window = ElapsedTimeWindow(message_text, window_manager)
                         window.set_resources(thread_hdc, thread_font)
                         window_manager.active_windows.append(window)
@@ -772,7 +782,10 @@ class CountdownWindow(BaseWindow):
         """
         self.message_text: str = message_text
         self.countdown_seconds: int = countdown_seconds
+        self.total_duration: int = countdown_seconds
         self.manager: WindowManager = manager
+        self.start_time: float = time.time()
+        self.end_time: float = self.start_time + countdown_seconds
         super().__init__(f"PyFensterCountdownClass_{id(self)}")
 
     def create_window(self, x: int = 0, y: int = 0) -> None:
@@ -811,7 +824,7 @@ class CountdownWindow(BaseWindow):
         set_layered_window_attributes(self.hwnd, 230)
         win32gui.ShowWindow(self.hwnd, win32con.SW_SHOWNORMAL)
         win32gui.UpdateWindow(self.hwnd)
-        self.set_timer(1, 1000)
+        self.set_timer(1, TIMER_DURATION_MS)
 
     def on_paint(self, hwnd: int) -> None:
         """
@@ -847,10 +860,14 @@ class CountdownWindow(BaseWindow):
             hwnd (int): Window handle
 
         """
-        self.countdown_seconds -= 1
-        if self.countdown_seconds <= 0:
+        current_time = time.time()
+        remaining_time = max(0, self.end_time - current_time)
+
+        if remaining_time <= 0:
             win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
         else:
+            # Update display with actual remaining seconds
+            self.countdown_seconds = int(remaining_time)
             win32gui.InvalidateRect(hwnd, None, True)  # noqa: FBT003
 
     def on_destroy(self, _hwnd: int) -> None:
@@ -902,6 +919,8 @@ class HighlightWindow(BaseWindow):
         self.timeout_seconds: int = timeout_seconds
         self.manager: WindowManager = manager
         self.color: tuple[int, int, int]  # Will be set in create_window
+        self.start_time: float = time.time()
+        self.end_time: float = self.start_time + timeout_seconds
         super().__init__(f"HighlightWindow{id(self)}")
 
     def create_window(self) -> None:
@@ -924,7 +943,7 @@ class HighlightWindow(BaseWindow):
         set_layered_window_attributes(self.hwnd, 128)
         win32gui.ShowWindow(self.hwnd, win32con.SW_SHOW)
         win32gui.UpdateWindow(self.hwnd)
-        self.set_timer(1, 1000)
+        self.set_timer(1, TIMER_DURATION_MS)
 
     def on_paint(self, hwnd: int) -> None:
         """
@@ -961,11 +980,10 @@ class HighlightWindow(BaseWindow):
             hwnd (int): Window handle
 
         """
-        self.timeout_seconds -= 1
-        if self.timeout_seconds <= 0:
+        current_time = time.time()
+        if current_time >= self.end_time:
             win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
-        else:
-            win32gui.InvalidateRect(hwnd, None, True)  # noqa: FBT003
+        # No need to update display for highlight windows - they don't show countdown text
 
     def on_destroy(self, _hwnd: int) -> None:
         """
@@ -992,6 +1010,7 @@ class ElapsedTimeWindow(BaseWindow):
         self.elapsed_seconds: int = 0
         self.manager: WindowManager = manager
         self.running: bool = True
+        self.start_time: float = time.time()
         super().__init__(f"ElapsedTimeWindow{id(self)}")
 
     def update_message(self, new_message: str) -> None:
@@ -1042,7 +1061,7 @@ class ElapsedTimeWindow(BaseWindow):
         set_layered_window_attributes(self.hwnd, 230)
         win32gui.ShowWindow(self.hwnd, win32con.SW_SHOWNORMAL)
         win32gui.UpdateWindow(self.hwnd)
-        self.set_timer(1, 1000)
+        self.set_timer(1, TIMER_DURATION_MS)
 
     def on_paint(self, hwnd: int) -> None:
         """
@@ -1079,7 +1098,8 @@ class ElapsedTimeWindow(BaseWindow):
 
         """
         if self.running:
-            self.elapsed_seconds += 1
+            current_time = time.time()
+            self.elapsed_seconds = int(current_time - self.start_time)
             win32gui.InvalidateRect(hwnd, None, True)  # noqa: FBT003
         else:
             win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
@@ -1172,7 +1192,7 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:  # noqa: ARG001
 def main() -> None:
     print("🔧 OverlayManager - Windows Overlay Application")
     print("================================================")
-    
+
     # Set up signal handlers for graceful shutdown
     signal.signal(signal.SIGINT, signal_handler)  # Ctrl+C
     signal.signal(signal.SIGTERM, signal_handler)  # Termination signal
