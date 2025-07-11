@@ -17,13 +17,13 @@ import sys
 import math
 import qrcode
 from types import FrameType
+from collections import deque
 from helpers import (
     draw_highlight_rectangle,
-    draw_countdown_rectangle,
-    draw_countdown_message,
     draw_qrcode,
-    get_countdown_size,
-    get_qrcode_size,
+    get_countdown_position,
+    get_qrcode_position,
+    draw_countdown_window,
 )
 
 logger = logging.getLogger("pyfenster")
@@ -54,6 +54,7 @@ class OverlayManager:
         self.response_queue = queue.Queue()
 
         self.hwnd = None
+        self._transparent_key = win32api.RGB(255, 0, 255)
         self._ui_thread = None
         self._command_thread = None
         self._ready = threading.Event()
@@ -92,7 +93,7 @@ class OverlayManager:
         # Makes all window elements transparent
         win32gui.SetLayeredWindowAttributes(
             self.hwnd,
-            win32api.RGB(0, 0, 0),
+            self._transparent_key,
             200,
             win32con.LWA_COLORKEY | win32con.LWA_ALPHA,
         )
@@ -146,82 +147,107 @@ class OverlayManager:
 
     def start_command_thread(self):
         def run_command_thread():
-            break_until = 0
+            break_until = 0.0
+            pending = deque()
+
             while not self.shutdown_event.is_set():
                 try:
                     request = self.command_queue.get(timeout=1)
                 except queue.Empty:
+                    # if break has just ended, flush pending
+                    if break_until and time.time() >= break_until:
+                        break_until = 0
+                        while pending:
+                            self._handle_request(pending.popleft())
                     continue
 
+                # unpack request and reply_queue
                 cmd = request[0]
-                reply_queue = request[-1]  # last element always the reply queue
+                reply_queue = request[-1]
 
+                # always handle break commands immediately
                 if cmd == "take_break":
-                    _, duration_seconds, reply_queue = request
-                    break_until = time.time() + duration_seconds
+                    _, duration_s, _ = request
+                    break_until = time.time() + duration_s
                     reply_queue.put(
                         {
                             "status": "success",
-                            "message": f"Break started for {duration_seconds} seconds",
+                            "message": f"Break started for {duration_s} seconds",
                         }
                     )
-                elif cmd == "cancel_break":
-                    _, reply_queue = request
-                    break_until = 0
-                    reply_queue.put(
-                        {
-                            "status": "success",
-                            "message": "Break canceled",
-                        }
-                    )
-                current_time = time.time()
-                if current_time < break_until:
                     continue
 
-                if cmd == "create_highlight":
-                    _, rect, timeout_s, reply_queue = request
-                    win_id = self.add_highlight_window(*rect, duration_s=timeout_s)
-                    reply_queue.put({"status": "success", "window_id": win_id})
+                if cmd == "cancel_break":
+                    _, _ = request
+                    break_until = 0
+                    pending.clear()
+                    reply_queue.put({"status": "success", "message": "Break canceled"})
+                    continue
 
-                elif cmd == "create_countdown":
-                    _, msg, secs, reply_queue = request
-                    win_id = self.add_countdown_window(msg, countdown_seconds=secs)
-                    reply_queue.put({"status": "success", "window_id": win_id})
+                # if we're in a break, buffer all other commands
+                if break_until and time.time() < break_until:
+                    pending.append(request)
+                    continue
 
-                elif cmd == "create_elapsed_time":
-                    _, msg, reply_queue = request
-                    win_id = self.add_elapsed_time_window(msg)
-                    reply_queue.put({"status": "success", "window_id": win_id})
+                # if break has just ended, flush before handling this
+                if break_until and time.time() >= break_until:
+                    break_until = 0
+                    while pending:
+                        self._handle_request(pending.popleft())
 
-                elif cmd == "create_qrcode_window":
-                    _, content, duration_seconds, caption, reply_queue = request
-                    win_id = self.add_qrcode_window(content, duration_seconds, caption)
-                    reply_queue.put({"status": "success", "window_id": win_id})
-
-                elif cmd == "close_window":
-                    _, window_id, reply_queue = request
-                    if window_id:
-                        self.close_window(window_id)
-                        reply_queue.put(
-                            {
-                                "status": "success",
-                                "message": f"Window {window_id} closed",
-                            }
-                        )
-
-                elif cmd == "update_window_message":
-                    _, window_id, msg, reply_queue = request
-                    if window_id and msg:
-                        self.update_window(window_id, msg)
-                        reply_queue.put(
-                            {
-                                "status": "success",
-                                "message": f"Window {window_id} updated",
-                            }
-                        )
+                # now handle this request immediately
+                self._handle_request(request)
 
         self._command_thread = threading.Thread(target=run_command_thread, daemon=True)
         self._command_thread.start()
+
+    def _handle_request(self, request):
+        cmd = request[0]
+        reply_queue = request[-1]
+        if cmd == "create_highlight":
+            _, rect, timeout_s, reply_queue = request
+            win_id = self.add_highlight_window(*rect, duration_s=timeout_s)
+            reply_queue.put({"status": "success", "window_id": win_id})
+
+        elif cmd == "create_countdown":
+            _, msg, secs, reply_queue = request
+            win_id = self.add_countdown_window(msg, countdown_seconds=secs)
+            reply_queue.put({"status": "success", "window_id": win_id})
+
+        elif cmd == "create_elapsed_time":
+            _, msg, reply_queue = request
+            win_id = self.add_elapsed_time_window(msg)
+            reply_queue.put({"status": "success", "window_id": win_id})
+
+        elif cmd == "create_qrcode_window":
+            _, content, duration_seconds, caption, reply_queue = request
+            win_id = self.add_qrcode_window(content, duration_seconds, caption)
+            reply_queue.put({"status": "success", "window_id": win_id})
+
+        elif cmd == "close_window":
+            _, window_id, reply_queue = request
+            if window_id:
+                self.close_window(window_id)
+                reply_queue.put(
+                    {
+                        "status": "success",
+                        "message": f"Window {window_id} closed",
+                    }
+                )
+
+        elif cmd == "update_window_message":
+            _, window_id, msg, reply_queue = request
+            if window_id and msg:
+                self.update_window(window_id, msg)
+                reply_queue.put(
+                    {
+                        "status": "success",
+                        "message": f"Window {window_id} updated",
+                    }
+                )
+
+        else:
+            reply_queue.put({"status": "error", "message": f"Unknown command {cmd}"})
 
     def start_pipe_server(self) -> None:
         """Start the named pipe server thread."""
@@ -360,7 +386,7 @@ class OverlayManager:
             self.command_queue.put(("create_elapsed_time", msg, reply_queue))
 
         elif cmd == "create_qrcode_window":
-            content = args.get("content", "")
+            content = args.get("data", "")
             duration_seconds = args.get("duration", 5)
             caption = args.get("caption", "")
             self.command_queue.put(
@@ -570,7 +596,7 @@ class OverlayManager:
         full = win32gui.GetClientRect(hwnd)
 
         # clear to transparent
-        br = win32gui.CreateSolidBrush(win32api.RGB(0, 0, 0))
+        br = win32gui.CreateSolidBrush(self._transparent_key)
         win32gui.FillRect(hdc, full, br)
         win32gui.DeleteObject(br)
 
@@ -582,9 +608,8 @@ class OverlayManager:
         for idx, (_, cd) in enumerate(
             sorted(self.countdowns.items(), key=lambda item: item[1]["order"])
         ):
-            size = get_countdown_size(hdc, idx, full)
-            draw_countdown_rectangle(hdc, size)
-            draw_countdown_message(hdc, cd, size)
+            position = get_countdown_position(idx, full)
+            draw_countdown_window(hdc, cd, position)
 
         box_gap = 10
         top_start = 20 + len(self.countdowns) * (80 + box_gap)  # below countdowns
@@ -593,8 +618,8 @@ class OverlayManager:
             sorted(self.qrcodes.items(), key=lambda i: i[1]["order"])
         ):
             total = qr_code["qr_size"] + 2 * qr_code["padding"]
-            size = get_qrcode_size(idx, total, box_gap, top_start, full)
-            draw_qrcode(hdc, qr_code, size=size)
+            position = get_qrcode_position(idx, total, box_gap, top_start, full)
+            draw_qrcode(hdc, qr_code, position=position)
 
         win32gui.EndPaint(hwnd, ps)
 
@@ -622,7 +647,6 @@ def main() -> None:
     print("🎯 Application ready - overlay windows can now be created")
     print("💡 Press Ctrl+C to shutdown gracefully")
     print()
-
     try:
         # Keep the main thread alive
         while True:
