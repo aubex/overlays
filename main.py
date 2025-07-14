@@ -330,6 +330,12 @@ class OverlayManager:
                 return {"status": "error", "message": "Command timed out"}
         return {"status": "error", "message": f"Unknown command {cmd}"}
 
+    def _invalidate_rect(self) -> None:
+        try:
+            win32gui.InvalidateRect(self.hwnd, None, True)
+        except pywintypes.error:
+            pass  # Do nothing; handle rest normally
+
     def add_highlight_window(self, left, top, right, bottom, duration_s):
         rid = self._next_rect_id
         self._next_rect_id += 1
@@ -341,20 +347,20 @@ class OverlayManager:
         self.rectangles.append(
             {"id": rid, "coords": (left, top, right, bottom), "color": color}
         )
-        win32gui.InvalidateRect(self.hwnd, None, True)
+        self._invalidate_rect()
         threading.Timer(duration_s, lambda: self._remove_rectangle(rid)).start()
         return rid
 
     def _remove_rectangle(self, rid):
         self.rectangles = [r for r in self.rectangles if r["id"] != rid]
-        win32gui.InvalidateRect(self.hwnd, None, True)
+        self._invalidate_rect()
 
     def add_elapsed_time_window(self, message_text):
         cid = self._next_countdown_id
         self._next_countdown_id += 1
         self._countdown_order += 1
         self.countdowns[cid] = {"message": message_text, "order": self._countdown_order}
-        win32gui.InvalidateRect(self.hwnd, None, True)
+        self._invalidate_rect()
         return cid
 
     def add_countdown_window(self, message_text, countdown_seconds):
@@ -368,7 +374,7 @@ class OverlayManager:
             "remaining": countdown_seconds,
             "order": self._countdown_order,
         }
-        win32gui.InvalidateRect(self.hwnd, None, True)
+        self._invalidate_rect()
         return cid
 
     def add_qrcode_window(
@@ -402,13 +408,13 @@ class OverlayManager:
         threading.Timer(
             timeout_seconds, lambda: self.remove_qrcode_window(qr_id)
         ).start()
-        win32gui.InvalidateRect(self.hwnd, None, True)
+        self._invalidate_rect()
         return qr_id
 
     def remove_qrcode_window(self, qr_id: int):
         if qr_id in self.qrcodes:
             del self.qrcodes[qr_id]
-            win32gui.InvalidateRect(self.hwnd, None, True)
+            self._invalidate_rect()
 
     def _run_countdown_manager(self):
         while not self.shutdown_event.is_set():
@@ -419,24 +425,24 @@ class OverlayManager:
                 remaining = max(0, math.ceil(cd["end_time"] - now))
                 if remaining <= 0:
                     cd["remaining"] = 0
-                    win32gui.InvalidateRect(self.hwnd, None, True)
+                    self._invalidate_rect()
                     del self.countdowns[cid]
                 elif cd["remaining"] != remaining:
                     cd["remaining"] = remaining
-                    win32gui.InvalidateRect(self.hwnd, None, True)
+                    self._invalidate_rect()
             time.sleep(0.1)
 
     def close_window(self, window_id: int):
         if window_id in self.countdowns:
             del self.countdowns[window_id]
-            win32gui.InvalidateRect(self.hwnd, None, True)
+            self._invalidate_rect()
 
     def update_window(self, window_id: int, new_msg: str):
         cd = self.countdowns.get(window_id)
         if not cd:
             return False
         cd["message"] = new_msg
-        win32gui.InvalidateRect(self.hwnd, None, True)
+        self._invalidate_rect()
         return True
 
     def wndProc(self, hwnd, msg, wParam, lParam):
