@@ -17,25 +17,14 @@ A lightweight Windows overlay manager and client library for creating interactiv
 
 * Windows 10 or later
 * Python 3.10+
-* `pywin32`, `qrcode`
-
-Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-With uv (recommended):
-```
-uv sync
-```
+* Dependencies: `pywin32`, `qrcode`
 
 ## Getting Started
 
 ### 1. Run the Overlay Manager
 
 The overlay manager hosts a named-pipe server and listens for overlay commands. \
-To run the manager, simply use the following uv command:
+To run the manager, simply use the following [uv](https://docs.astral.sh/uv/) command:
 
 ```bash
 uv run main.py
@@ -89,16 +78,16 @@ overlay.cancel_break()
 
 ## IPC Commands Reference
 
-| Command                 | Args                                          | Description                                     |                            |
-| ----------------------- | --------------------------------------------- | ----------------------------------------------- | -------------------------- |
-| `create_highlight_window`      | `rect: (l, t, r, b)`, `timeout_seconds: int`  | Shows a colored rectangle for a duration.       |                            |
-| `create_countdown_window`      | `message_text: str`, `countdown_seconds: int` | Starts a countdown timer.                       |                            |
-| `create_elapsed_time_window`   | `message_text: str`                           | Displays elapsed time since creation.           |                            |
+| Command                 | Args                                          | Description                                     |
+| ----------------------- | --------------------------------------------- | ----------------------------------------------- |
+| `create_highlight_window`      | `rect: (l, t, r, b)`, `timeout_seconds: int`  | Shows a colored rectangle for a duration.       |
+| `create_countdown_window`      | `message_text: str`, `countdown_seconds: int` | Starts a countdown timer.                       |
+| `create_elapsed_time_window`   | `message_text: str`                           | Displays elapsed time since creation.           |
 | `create_qrcode_window`  | `data: str \| dict`, `duration: int`, `caption: str`         | Renders a QR code overlay. |
-| `update_window_message` | `window_id: int`, `new_message: str`          | Changes the text of a countdown/elapsed window. |                            |
-| `close_window`          | `window_id: int`                              | Closes a countdown or elapsed window.           |                            |
-| `take_break`            | `duration_seconds: int`                       | Holds incoming commands for a break period.     |                            |
-| `cancel_break`          | *(none)*                                      | Cancels any active break and flushes queue.     |                            |
+| `update_window_message` | `window_id: int`, `new_message: str`          | Changes the text of a countdown/elapsed window. |
+| `close_window`          | `window_id: int`                              | Closes a countdown or elapsed window.           |
+| `take_break`            | `duration_seconds: int`                       | Holds incoming commands for a break period.     |
+| `cancel_break`          | *(none)*                                      | Cancels any active break and flushes queue.     |
 
 ## Graceful Shutdown
 
