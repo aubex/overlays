@@ -1,8 +1,12 @@
 [project]
-name = "overlay-manager"
+name = "overlays"
 version = "1.0.0"
-description = "Add your description here"
+description = "An overlay architecture with a manager to display (highlight) windows on the UI and a client to connect to the same pipeline for command processing."
 readme = "README.md"
+authors = [
+    { name = "Sergen Keskincelik", email = "sergen.keskincelik@aubex.de" },
+    { name = "Marius Räsener", email = "marius.raesener@aubex.de" },
+]
 requires-python = ">=3.12"
 dependencies = [
     "pywin32>=310",

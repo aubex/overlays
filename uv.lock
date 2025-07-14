@@ -21,7 +21,7 @@ wheels = [
 ]
 
 [[package]]
-name = "overlay-manager"
+name = "overlays"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
