@@ -181,6 +181,29 @@ class OverlayClient:
             return response.get("window_id")
         return None
 
+    def create_qrcode_window(
+        self, data: str | dict, duration: int = 5, caption: str | None = None
+    ) -> int:
+        """
+        Create a timed QR Code window.
+
+        Args:
+            data (str | dict): Content of the QR code
+            duration (int): Specifies how long the QR code should be displayed
+            caption (str | None): Optional caption text
+
+        Returns:
+            Optional[int]: Window ID if successful, None if server unavailable
+
+        """
+        response = self._send_command(
+            "create_qrcode_window",
+            {"data": data, "duration": duration, "caption": caption or ""},
+        )
+        if response.get("status") == "success":
+            return response.get("window_id")
+        return None
+
     def close_window(self, window_id: int) -> bool:
         """
         Close a window by ID.
@@ -351,6 +374,16 @@ class RemoteElapsedTimeWindow:
             self.close()
 
 
+_overlay_client: OverlayClient | None = None
+
+
+def get_overlay_client() -> OverlayClient:
+    global _overlay_client  # noqa: PLW0603
+    if _overlay_client is None:
+        _overlay_client = OverlayClient()
+    return _overlay_client
+
+
 if __name__ == "__main__":
     """
     Run this script to test the OverlayClient.
@@ -384,3 +417,5 @@ if __name__ == "__main__":
         print(f"Failed to connect to overlay manager: {e}")  # noqa: T201
     except Exception as e:  # noqa: BLE001
         print(f"Error during demo: {e}")  # noqa: T201
+
+_overlay_client: OverlayClient = None
