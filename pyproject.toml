@@ -1,6 +1,6 @@
 [project]
 name = "overlays"
-version = "1.0.0"
+version = "1.1.0"
 description = "An overlay architecture with a manager to display (highlight) windows on the UI and a client to connect to the same pipeline for command processing."
 readme = "README.md"
 authors = [
