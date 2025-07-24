@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "pywin32",
+#     "qrcode",
+# ]
+# ///
 import threading
 import time
 import win32api
