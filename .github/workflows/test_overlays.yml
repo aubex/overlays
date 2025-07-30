@@ -66,6 +66,8 @@ jobs:
         with:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
           name: overlays v${{ steps.get_version.outputs.VERSION }}
-          files: main.py
+          files: |
+            helpers.py
+            main.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
