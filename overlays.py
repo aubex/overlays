@@ -5,31 +5,37 @@
 #     "qrcode",
 # ]
 # ///
-import threading
-import time
-import win32api
-import win32con
-import win32gui
-import pywintypes
-import win32file
-import win32pipe
-import logging
 import contextlib
 import json
+import logging
+import math
 import queue
 import random
 import signal
 import sys
-import math
-import qrcode
+import threading
+import time
 from types import FrameType
+from typing import TYPE_CHECKING
+
+import pywintypes
+import qrcode
+import win32api
+import win32con
+import win32file
+import win32gui
+import win32pipe
+
 from helpers import (
+    draw_countdown_window,
     draw_highlight_rectangle,
     draw_qrcode,
     get_countdown_position,
     get_qrcode_position,
-    draw_countdown_window,
 )
+
+if TYPE_CHECKING:
+    from _win32typing import PyLOGFONT  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -489,42 +495,6 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:
     sys.exit(0)
 
 
-def main() -> None:
-    print("🔧 OverlayManager - Windows Overlay Application")
-    print("================================================")
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    print("✅ Signal handlers configured")
-    print("🚀 Starting OverlayManager...")
-    overlay_manager = OverlayManager()
-    overlay_manager.start()  # Ensure OverlayManager is started
-    print("✅ OverlayManager initialized successfully")
-    print(f"📡 Named pipe server: {overlay_manager.pipe_name}")
-    print("🎯 Application ready - overlay windows can now be created")
-    print("💡 Press Ctrl+C to shutdown gracefully")
-    print()
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        print("\nShutting down gracefully...")
-    finally:
-        print("🧹 Cleaning up resources...")
-        overlay_manager.shutdown()
-        print("👋 OverlayManager shutdown complete")
-
-
-if __name__ == "__main__":
-    main()
-import win32gui
-import win32con
-import win32api
-import time
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from _win32typing import PyLOGFONT  # type: ignore
-
 BOX_W, BOX_H, GAP, TOP = 300, 80, 10, 20
 
 
@@ -700,3 +670,32 @@ def draw_qrcode(
             caption_rect,
             win32con.DT_CENTER | win32con.DT_SINGLELINE | win32con.DT_VCENTER,
         )
+
+
+def main() -> None:
+    print("🔧 OverlayManager - Windows Overlay Application")
+    print("================================================")
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    print("✅ Signal handlers configured")
+    print("🚀 Starting OverlayManager...")
+    overlay_manager = OverlayManager()
+    overlay_manager.start()  # Ensure OverlayManager is started
+    print("✅ OverlayManager initialized successfully")
+    print(f"📡 Named pipe server: {overlay_manager.pipe_name}")
+    print("🎯 Application ready - overlay windows can now be created")
+    print("💡 Press Ctrl+C to shutdown gracefully")
+    print()
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nShutting down gracefully...")
+    finally:
+        print("🧹 Cleaning up resources...")
+        overlay_manager.shutdown()
+        print("👋 OverlayManager shutdown complete")
+
+
+if __name__ == "__main__":
+    main()

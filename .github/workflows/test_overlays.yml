@@ -32,26 +32,3 @@ jobs:
         run: uv run ruff format --check
       - name: Run tests
         run: uv run pytest -v
-
-  release:
-    name: Release overlays
-    runs-on: windows-latest
-    needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Concatenate source files
-        run: |
-          Get-Content main.py, helpers.py | Set-Content overlays.py
-        shell: pwsh
-      - name: Commit and push overlays.py
-        run: |
-          git config --global user.name "GitHub Action"
-          git config --global user.email "action@github.com"
-          git add overlays.py
-          git commit -m "Add generated overlays.py"
-          git push
-        shell: pwsh
