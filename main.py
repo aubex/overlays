@@ -366,7 +366,13 @@ class OverlayManager:
         cid = self._next_countdown_id
         self._next_countdown_id += 1
         self._countdown_order += 1
-        self.countdowns[cid] = {"message": message_text, "order": self._countdown_order}
+
+        # store the message and when we started
+        self.countdowns[cid] = {
+            "message": message_text,
+            "start_time": time.time(),
+            "order": self._countdown_order,
+        }
         self._invalidate_rect()
         return cid
 

@@ -1,6 +1,7 @@
 import win32gui
 import win32con
 import win32api
+import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -62,11 +63,15 @@ def draw_countdown_window(
     left, top, right, bottom = position
     initial_w = right - left
     pad_x, pad_y = padding
+    now = time.time()
 
     # Build lines
     lines = [cd["message"]]
     if "remaining" in cd:
         lines.append(f"Closing in {cd['remaining']} s")
+    elif "start_time" in cd:
+        elapsed = int(now - cd["start_time"])
+        lines.append(f"Elapsed time: {elapsed} seconds")
 
     # Select font & colors
     lf = create_font()
