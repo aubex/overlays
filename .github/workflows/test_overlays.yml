@@ -5,7 +5,7 @@ on:
   pull_request:
     branches:
       - main
-      
+
 jobs:
   test:
     name: Test overlays
@@ -66,5 +66,6 @@ jobs:
         with:
           tag_name: v${{ steps.get_version.outputs.VERSION }}
           name: overlays v${{ steps.get_version.outputs.VERSION }}
+          files: main.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
