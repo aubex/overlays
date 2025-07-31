@@ -23,7 +23,7 @@ import sys
 import math
 import qrcode
 from types import FrameType
-from helpers import (
+from overlays.helpers import (
     draw_highlight_rectangle,
     draw_qrcode,
     get_countdown_position,

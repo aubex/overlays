@@ -1,10 +1,11 @@
 import pytest
-import win32gui
 import win32api
-import win32con
-import win32gui as _win32gui
 import win32api as _win32api
-from helpers import (
+import win32con
+import win32gui
+import win32gui as _win32gui
+
+from overlays.helpers import (
     draw_countdown_window,
     draw_qrcode,
 )
@@ -27,7 +28,7 @@ def stub_win32(monkeypatch):
     }
 
     # create_font stub
-    monkeypatch.setattr("helpers.create_font", lambda: "LOGFONT")
+    monkeypatch.setattr("overlays.helpers.create_font", lambda: "LOGFONT")
 
     # Font creation and selection
     monkeypatch.setattr(_win32gui, "CreateFontIndirect", lambda lf: 1001)

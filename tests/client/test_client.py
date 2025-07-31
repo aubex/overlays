@@ -1,11 +1,11 @@
-import pytest
-import pywintypes
 from unittest.mock import Mock
 
+import pytest
+import pywintypes
 import win32file
 
 # Replace 'overlay_client_module' with the actual module name where OverlayClient is defined
-from client import (
+from overlays.client import (
     OverlayClient,
     RemoteElapsedTimeWindow,
     get_overlay_client,
@@ -16,9 +16,9 @@ class TestOverlayClient:
     @pytest.fixture(autouse=True)
     def reset_module_state(self, monkeypatch):
         # Reset the module-level client singleton
-        monkeypatch.setattr("client._overlay_client", None)
+        monkeypatch.setattr("overlays.client._overlay_client", None)
         yield
-        monkeypatch.setattr("client._overlay_client", None)
+        monkeypatch.setattr("overlays.client._overlay_client", None)
 
     @pytest.fixture
     def unavailable_client(self, monkeypatch):

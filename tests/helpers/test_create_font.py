@@ -1,8 +1,7 @@
-import win32gui
 import win32con
-from helpers import (
-    create_font,
-)
+import win32gui
+
+from overlays.helpers import create_font
 
 
 def test_create_font_returns_logfont_instance():

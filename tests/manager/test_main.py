@@ -1,11 +1,12 @@
 # tests/test_main.py
-import pytest
+import signal
 import threading
 import time
-import signal
+
+import pytest
 import win32gui
 
-import main
+from overlays import main
 
 
 # Dummy Timer to execute callbacks immediately
