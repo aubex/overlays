@@ -1,6 +1,6 @@
 # overlays
 
-A lightweight Windows overlay manager and client library for creating interactive overlay windows: highlights, countdowns, elapsed timers, and QR codes, all communicated over a named pipe. This project is licensed under the Apache License 2.0. See the LICENSE file for details.
+A lightweight Windows overlay manager and client library for creating click through overlay windows: highlights, countdowns, elapsed timers, and QR codes, all communicated over a named pipe. This project is licensed under the Apache License 2.0. See the LICENSE file for details.
 
 ![OverlayManager in action](static/stress_test.gif)
 
@@ -9,13 +9,13 @@ A lightweight Windows overlay manager and client library for creating interactiv
 * **Highlight Windows**: Draw colored rectangles around screen regions for attention-grabbing highlights.
 * **Countdown Timers**: Display a countdown clock with a custom message.
 * **Elapsed Time Windows**: Track and display elapsed time since creation.
-* **QR Code Overlays**: Render QR codes with captions in an always-on-top window.
+* **QR Code Overlays**: Render QR codes with captions.
 * **Named-Pipe IPC**: Send commands from your application to the overlay manager via a simple pipe.
 * **Graceful Shutdown**: Press `Ctrl+C` or send `SIGTERM` to clean up windows and threads.
 
 ## Requirements
 
-* Windows 10 or later
+* Windows 10 or later (older Versions might work but aren't supported)
 * Python 3.10+
 * Dependencies: `pywin32`, `qrcode`
 
@@ -27,7 +27,7 @@ The overlay manager hosts a named-pipe server and listens for overlay commands. 
 To run the manager, simply use the following [uv](https://docs.astral.sh/uv/) command:
 
 ```bash
-uv run main.py
+uvx overlays
 ```
 
 You should see the following output:
@@ -48,7 +48,7 @@ You should see the following output:
 Import and instantiate the `OverlayClient` to send overlay commands:
 
 ```python
-from overlay_client import OverlayClient
+from overlays.client import OverlayClient
 
 # Create one client to connect to the manager's pipe
 overlay = OverlayClient(pipe_name=r"\\.\pipe\overlay_manager")
