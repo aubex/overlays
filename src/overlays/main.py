@@ -5,30 +5,33 @@
 #     "qrcode",
 # ]
 # ///
-import threading
-import time
-import win32api
-import win32con
-import win32gui
-import pywintypes
-import win32file
-import win32pipe
-import logging
 import contextlib
 import json
+import logging
+import math
+import platform
 import queue
 import random
 import signal
 import sys
-import math
-import qrcode
+import threading
+import time
 from types import FrameType
+
+import pywintypes
+import qrcode
+import win32api
+import win32con
+import win32file
+import win32gui
+import win32pipe
+
 from overlays.helpers import (
+    draw_countdown_window,
     draw_highlight_rectangle,
     draw_qrcode,
     get_countdown_position,
     get_qrcode_position,
-    draw_countdown_window,
 )
 
 logger = logging.getLogger(__name__)
@@ -490,6 +493,9 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:
 
 
 def main() -> None:
+    if platform.system() != "Windows":
+        print("❌ Error: This application is designed to run on Windows only.")
+        exit(1)
     print("🔧 OverlayManager - Windows Overlay Application")
     print("================================================")
     signal.signal(signal.SIGINT, signal_handler)

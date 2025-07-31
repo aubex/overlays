@@ -2,6 +2,7 @@
 import signal
 import threading
 import time
+from unittest.mock import patch
 
 import pytest
 import win32gui
@@ -171,3 +172,21 @@ def test_main_sets_signals_and_shuts_down(monkeypatch):
     assert signal.SIGTERM in calls
     assert "started" in calls
     assert "shutdown" in calls
+
+
+def test_exits_on_non_windows_platform(capsys):
+    # Mock platform.system to return a non-Windows platform
+    with patch("platform.system", return_value="Linux"):
+        # Expect SystemExit to be raised with code 1
+        with pytest.raises(SystemExit) as exc_info:
+            main.main()  # Call the main function directly
+
+        # Verify the exit code is 1
+        assert exc_info.value.code == 1
+
+        # Capture the output and verify the error message
+        captured = capsys.readouterr()
+        assert (
+            "❌ Error: This application is designed to run on Windows only."
+            in captured.out
+        )
