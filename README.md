@@ -1,6 +1,6 @@
 # overlays
 
-A lightweight Windows overlay manager and client library for creating interactive overlay windows: highlights, countdowns, elapsed timers, and QR codes, all communicated over a named pipe.
+A lightweight Windows overlay manager and client library for creating interactive overlay windows: highlights, countdowns, elapsed timers, and QR codes, all communicated over a named pipe. This project is licensed under the Apache License 2.0. See the LICENSE file for details.
 
 ![OverlayManager in action](static/stress_test.gif)
 

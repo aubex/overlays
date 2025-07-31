@@ -7,7 +7,7 @@ authors = [
     { name = "Sergen Keskincelik", email = "sergen.keskincelik@aubex.de" },
     { name = "Marius Räsener", email = "marius.raesener@aubex.de" },
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = ["pywin32>=310", "qrcode>=8.2"]
 
 [project.optional-dependencies]
