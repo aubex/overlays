@@ -31,7 +31,7 @@ jobs:
       - name: Run tests
         run: uv run --dev pytest -v
 
-release:
+  release:
     name: Release overlays
     environment: prod
     runs-on: windows-latest
