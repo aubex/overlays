@@ -31,12 +31,12 @@ Homepage = "https://github.com/aubex/overlays"
 Repository = "https://github.com/aubex/overlays"
 Issues = "https://github.com/aubex/overlays/issues"
 
-[project.optional-dependencies]
-dev = ["pytest>=8.4.1", "ruff>=0.12.1"]
-
 [project.scripts]
 overlays = "overlays:main.main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["pytest>=8.4.1", "ruff>=0.12.2"]

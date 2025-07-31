@@ -18,6 +18,33 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v1
+        with:
+          version: "latest"
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: lint
+        run: uv run --dev ruff check src
+      - name: format
+        run: uv run --dev ruff format --check src
+      - name: Run tests
+        run: uv run --dev pytest -v
+
+release:
+    name: Release overlays
+    environment: prod
+    runs-on: windows-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    needs: test
+    if: github.ref == 'refs/heads/prod'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: Set up just
         uses: extractions/setup-just@v2
       - name: Set up uv
@@ -25,10 +52,8 @@ jobs:
         with:
           version: "latest"
       - name: Install dependencies
-        run: uv sync --extra dev
-      - name: lint
-        run: uv run ruff check src
-      - name: format
-        run: uv run ruff format --check src
-      - name: Run tests
-        run: uv run pytest -v
+        run: uv sync
+      - name: Build
+        run: uv build
+      - name: Publish
+        run: uv publish -t ${{ secrets.PYPI_TOKEN }}
