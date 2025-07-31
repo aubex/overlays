@@ -8,7 +8,10 @@ authors = [
     { name = "Marius Räsener", email = "marius.raesener@aubex.de" },
 ]
 requires-python = ">=3.10"
-dependencies = ["pywin32>=310", "qrcode>=8.2"]
+dependencies = [
+    "pywin32>=310; sys_platform == 'win32'",
+    "qrcode>=8.2; sys_platform == 'win32'",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

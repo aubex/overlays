@@ -1,13 +1,11 @@
-# tests/test_main.py
 import signal
 import threading
 import time
-from unittest.mock import patch
 
 import pytest
 import win32gui
 
-from overlays import main
+from overlays import manager
 
 
 # Dummy Timer to execute callbacks immediately
@@ -22,15 +20,19 @@ class DummyTimer:
 @pytest.fixture(autouse=True)
 def patch_timer_and_threads(monkeypatch):
     monkeypatch.setattr(threading, "Timer", DummyTimer)
-    monkeypatch.setattr(main.OverlayManager, "_run_pipe_server", lambda self: None)
-    monkeypatch.setattr(main.OverlayManager, "_run_command_thread", lambda self: None)
+    monkeypatch.setattr(manager.OverlayManager, "_run_pipe_server", lambda self: None)
+    monkeypatch.setattr(
+        manager.OverlayManager, "_run_command_thread", lambda self: None
+    )
 
     # Stub window init/pump
     def fake_init_window(self):
         self.hwnd = 1
         self._ready.set()
 
-    monkeypatch.setattr(main.OverlayManager, "_init_window_and_pump", fake_init_window)
+    monkeypatch.setattr(
+        manager.OverlayManager, "_init_window_and_pump", fake_init_window
+    )
     monkeypatch.setattr(win32gui, "PumpMessages", lambda: None)
     monkeypatch.setattr(win32gui, "InvalidateRect", lambda hwnd, rect, b: None)
 
@@ -38,7 +40,7 @@ def patch_timer_and_threads(monkeypatch):
 
 
 def test_add_highlight_window():
-    om = main.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager(pipe_name="test")
     om.rectangles.clear()
     # first rectangle
     om.add_highlight_window(7, 7, 7, 7, duration_s=10)
@@ -52,7 +54,7 @@ def test_add_highlight_window():
 
 
 def test_remove_rectangle():
-    om = main.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager(pipe_name="test")
     om.rectangles = [{"id": 1, "coords": (0, 0, 1, 1)}]
     om._remove_rectangle(1)
     assert om.rectangles == []
@@ -73,7 +75,7 @@ def test_add_countdown_window_and_tick(monkeypatch):
 
     monkeypatch.setattr(threading, "Timer", NoopTimer)
 
-    om = main.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager(pipe_name="test")
     cid = om.add_countdown_window("msg", 3)
     assert cid == 1
     cd = om.countdowns[cid]
@@ -107,7 +109,7 @@ def test_add_and_remove_qrcode_window(monkeypatch):
 
     monkeypatch.setattr(threading, "Timer", NoopTimer)
 
-    om = main.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager(pipe_name="test")
     qr_id = om.add_qrcode_window({"data": "x"}, timeout_seconds=0, caption="c")
     assert qr_id == 1
     assert qr_id in om.qrcodes
@@ -116,7 +118,7 @@ def test_add_and_remove_qrcode_window(monkeypatch):
     assert qr_id not in om.qrcodes
 
     # try again on a fresh manager
-    om = main.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager(pipe_name="test")
     qr_id = om.add_qrcode_window("foo", timeout_seconds=0, caption=None)
     assert qr_id == 1
     assert qr_id in om.qrcodes
@@ -125,7 +127,7 @@ def test_add_and_remove_qrcode_window(monkeypatch):
 
 
 def test_close_and_update_window():
-    om = main.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager(pipe_name="test")
     om.countdowns = {1: {"message": "old", "order": 1}}
     assert om.update_window(1, "new") is True
     assert om.countdowns[1]["message"] == "new"
@@ -134,7 +136,7 @@ def test_close_and_update_window():
 
 
 def test_process_pipe_command_unknown():
-    om = main.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager(pipe_name="test")
     resp = om._process_pipe_command({"command": "foo", "args": {}})
     assert resp["status"] == "error"
     assert "Unknown command" in resp["message"]
@@ -142,7 +144,7 @@ def test_process_pipe_command_unknown():
 
 def test_signal_handler_exits():
     with pytest.raises(SystemExit):
-        main.signal_handler(signal.SIGINT, None)
+        manager.signal_handler(signal.SIGINT, None)
 
 
 def test_main_sets_signals_and_shuts_down(monkeypatch):
@@ -161,32 +163,14 @@ def test_main_sets_signals_and_shuts_down(monkeypatch):
             calls.append("shutdown")
 
     # patch into main
-    monkeypatch.setattr(main, "OverlayManager", DummyOverlay)
+    monkeypatch.setattr(manager, "OverlayManager", DummyOverlay)
     monkeypatch.setattr(
         time, "sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
     )
 
-    main.main()
+    manager.main()
 
     assert signal.SIGINT in calls
     assert signal.SIGTERM in calls
     assert "started" in calls
     assert "shutdown" in calls
-
-
-def test_exits_on_non_windows_platform(capsys):
-    # Mock platform.system to return a non-Windows platform
-    with patch("platform.system", return_value="Linux"):
-        # Expect SystemExit to be raised with code 1
-        with pytest.raises(SystemExit) as exc_info:
-            main.main()  # Call the main function directly
-
-        # Verify the exit code is 1
-        assert exc_info.value.code == 1
-
-        # Capture the output and verify the error message
-        captured = capsys.readouterr()
-        assert (
-            "❌ Error: This application is designed to run on Windows only."
-            in captured.out
-        )
