@@ -14,7 +14,7 @@ dependencies = ["pywin32>=310", "qrcode>=8.2"]
 dev = ["overlays", "pytest>=8.4.1", "ruff>=0.12.1"]
 
 [project.scripts]
-myoverlays = "overlays:main"
+overlays = "overlays:main.main"
 
 [build-system]
 requires = ["hatchling"]
