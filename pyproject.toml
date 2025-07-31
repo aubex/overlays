@@ -1,7 +1,7 @@
 [project]
 name = "overlays"
 version = "1.3.0"
-description = "An overlay architecture with a manager to display (highlight) windows on the UI and a client to connect to the same pipeline for command processing."
+description = "A lightweight Windows overlay manager and client library for creating click through overlay windows."
 readme = "README.md"
 authors = [
     { name = "Sergen Keskincelik", email = "sergen.keskincelik@aubex.de" },
@@ -9,6 +9,27 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = ["pywin32>=310", "qrcode>=8.2"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache License 2.0",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Environment :: Win32 (MS Windows)",
+]
+
+[project.urls]
+Homepage = "https://github.com/aubex/overlays"
+Repository = "https://github.com/aubex/overlays"
+Issues = "https://github.com/aubex/overlays/issues"
 
 [project.optional-dependencies]
 dev = ["overlays", "pytest>=8.4.1", "ruff>=0.12.1"]
