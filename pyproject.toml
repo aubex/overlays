@@ -8,13 +8,14 @@ authors = [
     { name = "Marius Räsener", email = "marius.raesener@aubex.de" },
 ]
 requires-python = ">=3.12"
-dependencies = [
-    "pywin32>=310",
-    "qrcode>=8.2",
-]
+dependencies = ["pywin32>=310", "qrcode>=8.2"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.4.1",
-    "ruff>=0.12.1",
-]
+dev = ["pytest>=8.4.1", "ruff>=0.12.1"]
+
+[project.scripts]
+myoverlays = "overlays:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
