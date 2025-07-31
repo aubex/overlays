@@ -366,6 +366,7 @@ class OverlayManager:
         self.countdowns[cid] = {
             "message": message_text,
             "start_time": time.time(),
+            "elapsed": 0,
             "order": self._countdown_order,
         }
         self._invalidate_rect()
@@ -428,6 +429,9 @@ class OverlayManager:
         while not self.shutdown_event.is_set():
             now = time.time()
             for cid, cd in list(self.countdowns.items()):
+                if "start_time" in cd:
+                    cd["elapsed"] = math.ceil(now - cd["start_time"]) - 1
+                    self._invalidate_rect()
                 if "end_time" not in cd:
                     continue
                 remaining = max(0, math.ceil(cd["end_time"] - now))

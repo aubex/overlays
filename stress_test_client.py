@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from client import OverlayClient, RemoteElapsedTimeWindow
+from src.overlays.client import OverlayClient, RemoteElapsedTimeWindow
 
 # Configure logging
 logging.basicConfig(

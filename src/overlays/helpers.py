@@ -69,9 +69,8 @@ def draw_countdown_window(
     lines = [cd["message"]]
     if "remaining" in cd:
         lines.append(f"Closing in {cd['remaining']} s")
-    elif "start_time" in cd:
-        elapsed = int(now - cd["start_time"])
-        lines.append(f"Elapsed time: {elapsed} seconds")
+    elif "elapsed" in cd:
+        lines.append(f"Elapsed time: {cd['elapsed']} seconds")
 
     # Select font & colors
     lf = create_font()
