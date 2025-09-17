@@ -4,7 +4,7 @@ import click
 
 @click.command()
 @click.option(
-    "--pipe_name", default=r"\\.\pipe\overlay_manager", help="Name of the Windows pipe."
+    "--pipe_name", default=r"overlay_manager", help="Name of the Windows pipe."
 )
 def cross_platform_helper(pipe_name: str):
     if platform.system() != "Windows":

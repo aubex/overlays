@@ -158,7 +158,7 @@ class OverlayManager:
         self._next_qrcode_id = 1
         self._qrcode_order = 0
         self._countdown_order = 0
-        self.pipe_name = pipe_name
+        self.pipe_name = rf"\\.\pipe\{pipe_name}"
         self.shutdown_event = threading.Event()
         self.command_queue = queue.Queue()
         self._break_until = 0.0
@@ -488,7 +488,7 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:
     sys.exit(0)
 
 
-def main(pipe_name: str = r"\\.\pipe\overlay_manager") -> None:
+def main(pipe_name: str = r"overlay_manager") -> None:
     print("🔧 OverlayManager - Windows Overlay Application")
     print("================================================")
     signal.signal(signal.SIGINT, signal_handler)

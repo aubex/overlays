@@ -33,12 +33,12 @@ def test_cli_calls_main_with_option():
         # IMPORTANT: use the exact flag string you declared: --pipe_name
         result = runner.invoke(
             main.cross_platform_helper,
-            ["--pipe_name", r"\\.\pipe\overlay_manager_arg"],
+            ["--pipe_name", r"overlay_manager_arg"],
         )
 
     # If it didn't run, result.output will often have Click usage text
     assert result.exit_code == 0, result.output
-    mock_main.assert_called_once_with(r"\\.\pipe\overlay_manager_arg")
+    mock_main.assert_called_once_with(r"overlay_manager_arg")
 
 
 def test_calls_main_without_args():
@@ -55,4 +55,4 @@ def test_calls_main_without_args():
 
     # If it didn't run, result.output will often have Click usage text
     assert result.exit_code == 0, result.output
-    mock_main.assert_called_once_with(r"\\.\pipe\overlay_manager")
+    mock_main.assert_called_once_with(r"overlay_manager")

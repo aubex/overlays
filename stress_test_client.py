@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from src.overlays.client import OverlayClient, RemoteElapsedTimeWindow
+from src.overlays.client import get_overlay_client, RemoteElapsedTimeWindow
 
 # Configure logging
 logging.basicConfig(
@@ -124,9 +124,7 @@ class TestResult:
 class StressTestClient:
     """Comprehensive stress testing client for OverlayManager."""
 
-    def __init__(
-        self, pipe_name: str = r"\\.\pipe\overlay_manager", timeout: int = 5000
-    ):
+    def __init__(self, timeout: int = 5000):
         """
         Initialize the stress test client.
 
@@ -134,12 +132,11 @@ class StressTestClient:
             pipe_name: Named pipe to connect to
             timeout: Connection timeout in milliseconds
         """
-        self.pipe_name = pipe_name
         self.timeout = timeout
         self.results: list[TestResult] = []
         self.active_windows: list[int] = []
         self.test_start_time = 0.0
-        self.overlay_client = OverlayClient(self.pipe_name, self.timeout)
+        self.overlay_client = get_overlay_client(self.timeout)
 
     def log_result(self, result: TestResult) -> None:
         """Log and store a test result with colorful output."""
