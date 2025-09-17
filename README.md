@@ -21,7 +21,7 @@ A lightweight Windows overlay manager and client library for creating click thro
 
 ## Getting Started
 
-### 1. Run the Overlay Manager
+### 1a. Run the Overlay Manager
 
 The overlay manager hosts a named-pipe server and listens for overlay commands. \
 To run the manager, simply use the following [uv](https://docs.astral.sh/uv/) command:
@@ -42,6 +42,27 @@ You should see the following output:
 🎯 Application ready - overlay windows can now be created
 💡 Press Ctrl+C to shutdown gracefully
 ```
+
+### 1b. Run the Overlay Manager with arguments
+```bash
+uvx overlays --help
+```
+
+You should see the following allowed arguments:
+```
+Usage: overlays [OPTIONS]
+
+Options:
+  --pipe_name TEXT  Name of the Windows pipe.
+  --help            Show this message and exit.
+```
+
+Supported arguments:
+
+| Argument | Description                        |
+|-----------|------------------------------------|
+| pipe_name | Defines the name of the win32 pipe |
+
 
 ### 2. Embed the OverlayClient in Your Code
 
