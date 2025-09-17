@@ -1,4 +1,5 @@
 import platform
+import sys
 
 
 def cross_platform_helper():
@@ -8,7 +9,10 @@ def cross_platform_helper():
 
     from overlays.manager import main
 
-    main()
+    if len(sys.argv) == 2:
+        main(sys.argv[1])
+    else:
+        main()
 
 
 if __name__ == "__main__":
