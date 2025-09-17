@@ -377,10 +377,12 @@ class RemoteElapsedTimeWindow:
 _overlay_client: OverlayClient | None = None
 
 
-def get_overlay_client() -> OverlayClient:
+def get_overlay_client(
+    pipe_name: str = r"\\.\pipe\overlay_manager", timeout: int = 5000
+) -> OverlayClient:
     global _overlay_client  # noqa: PLW0603
     if _overlay_client is None:
-        _overlay_client = OverlayClient()
+        _overlay_client = OverlayClient(pipe_name=pipe_name, timeout=timeout)
     return _overlay_client
 
 
@@ -417,5 +419,3 @@ if __name__ == "__main__":
         print(f"Failed to connect to overlay manager: {e}")  # noqa: T201
     except Exception as e:  # noqa: BLE001
         print(f"Error during demo: {e}")  # noqa: T201
-
-_overlay_client: OverlayClient = None
