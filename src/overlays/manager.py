@@ -148,7 +148,7 @@ COMMANDS = {
 
 # --- OverlayManager ---
 class OverlayManager:
-    def __init__(self, pipe_name: str = r"\\.\pipe\overlay_manager"):
+    def __init__(self, pipe_name: str):
         self.className = "TransparentOverlayWindow"
         self.rectangles = []
         self.countdowns = {}
@@ -488,14 +488,14 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:
     sys.exit(0)
 
 
-def main() -> None:
+def main(pipe_name: str = r"\\.\pipe\overlay_manager") -> None:
     print("🔧 OverlayManager - Windows Overlay Application")
     print("================================================")
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     print("✅ Signal handlers configured")
     print("🚀 Starting OverlayManager...")
-    overlay_manager = OverlayManager()
+    overlay_manager = OverlayManager(pipe_name=pipe_name)
     overlay_manager.start()  # Ensure OverlayManager is started
     print("✅ OverlayManager initialized successfully")
     print(f"📡 Named pipe server: {overlay_manager.pipe_name}")
