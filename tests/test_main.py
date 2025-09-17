@@ -1,8 +1,9 @@
 from unittest.mock import patch
-import sys
+from click.testing import CliRunner
+
 import pytest
 
-from overlays import main
+from overlays import main, manager
 
 
 def test_exits_on_non_windows_platform(capsys):
@@ -10,7 +11,7 @@ def test_exits_on_non_windows_platform(capsys):
     with patch("platform.system", return_value="Linux"):
         # Expect SystemExit to be raised with code 1
         with pytest.raises(SystemExit) as exc_info:
-            main.cross_platform_helper()  # Call the main function directly
+            main.cross_platform_helper("")  # Call the main function directly
 
         # Verify the exit code is 1
         assert exc_info.value.code == 1
@@ -23,24 +24,35 @@ def test_exits_on_non_windows_platform(capsys):
         )
 
 
-def test_calls_main_with_arg_when_two_args():
-    with patch.object(sys, "argv", ["main.py", r"\\.\pipe\overlay_manager_arg"]):
-        with patch("overlays.manager.main") as mock_main:
-            main.cross_platform_helper()
-            mock_main.assert_called_once_with(r"\\.\pipe\overlay_manager_arg")
-
-
-def test_calls_main_without_args_when_more_than_two_args():
-    with patch.object(
-        sys, "argv", ["main.py", r"\\.\pipe\overlay_manager_arg", "--help"]
+def test_cli_calls_main_with_option():
+    runner = CliRunner()
+    with (
+        patch("platform.system", return_value="Windows"),
+        patch.object(manager, "main") as mock_main,
     ):
-        with patch("overlays.manager.main") as mock_main:
-            main.cross_platform_helper()
-            mock_main.assert_called_once_with()
+        # IMPORTANT: use the exact flag string you declared: --pipe_name
+        result = runner.invoke(
+            main.cross_platform_helper,
+            ["--pipe_name", r"\\.\pipe\overlay_manager_arg"],
+        )
+
+    # If it didn't run, result.output will often have Click usage text
+    assert result.exit_code == 0, result.output
+    mock_main.assert_called_once_with(r"\\.\pipe\overlay_manager_arg")
 
 
 def test_calls_main_without_args():
-    with patch("overlays.manager.main") as mock_main:
-        with patch.object(sys, "argv", ["main.py"]):
-            main.cross_platform_helper()
-            mock_main.assert_called_once_with()
+    runner = CliRunner()
+    with (
+        patch("platform.system", return_value="Windows"),
+        patch.object(manager, "main") as mock_main,
+    ):
+        # IMPORTANT: use the exact flag string you declared: --pipe_name
+        result = runner.invoke(
+            main.cross_platform_helper,
+            [],
+        )
+
+    # If it didn't run, result.output will often have Click usage text
+    assert result.exit_code == 0, result.output
+    mock_main.assert_called_once_with(r"\\.\pipe\overlay_manager")
