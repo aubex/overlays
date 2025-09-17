@@ -43,25 +43,35 @@ You should see the following output:
 💡 Press Ctrl+C to shutdown gracefully
 ```
 
-### 1b. Run the Overlay Manager with arguments
+### 1b. Run the Overlay Manager with env vars
+
+Specify your environment variables in your .env file or in your terminal, i.e. `OVERLAY_PIPE_NAME="overlay_manager_env"`
+
+Afterwards run the overlay manager:
+
 ```bash
-uvx overlays --help
+uvx overlays
 ```
 
 You should see the following allowed arguments:
 ```
-Usage: overlays [OPTIONS]
-
-Options:
-  --pipe_name TEXT  Name of the Windows pipe.
-  --help            Show this message and exit.
+🔧 OverlayManager - Windows Overlay Application
+================================================
+✅ Signal handlers configured
+🚀 Starting OverlayManager...
+✅ OverlayManager initialized successfully
+📡 Named pipe server: \\.\pipe\overlay_manager_env
+🎯 Application ready - overlay windows can now be created
+💡 Press Ctrl+C to shutdown gracefully
 ```
 
-Supported arguments:
+Supported env vars:
 
-| Argument | Description                        |
+| Variable | Description                        |
 |-----------|------------------------------------|
-| pipe_name | Defines the name of the win32 pipe |
+| OVERLAY_PIPE_NAME | Defines the name of the win32 pipe |
+
+
 
 
 ### 2. Embed the OverlayClient in Your Code
