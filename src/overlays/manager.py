@@ -8,6 +8,7 @@ import signal
 import sys
 import threading
 import time
+import os
 from types import FrameType
 
 import pywintypes
@@ -148,7 +149,7 @@ COMMANDS = {
 
 # --- OverlayManager ---
 class OverlayManager:
-    def __init__(self, pipe_name: str):
+    def __init__(self):
         self.className = "TransparentOverlayWindow"
         self.rectangles = []
         self.countdowns = {}
@@ -158,6 +159,7 @@ class OverlayManager:
         self._next_qrcode_id = 1
         self._qrcode_order = 0
         self._countdown_order = 0
+        pipe_name = os.environ.get("OVERLAY_PIPE_NAME", "overlay_manager")
         self.pipe_name = rf"\\.\pipe\{pipe_name}"
         self.shutdown_event = threading.Event()
         self.command_queue = queue.Queue()
@@ -488,14 +490,14 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:
     sys.exit(0)
 
 
-def main(pipe_name: str = r"overlay_manager") -> None:
+def main() -> None:
     print("🔧 OverlayManager - Windows Overlay Application")
     print("================================================")
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     print("✅ Signal handlers configured")
     print("🚀 Starting OverlayManager...")
-    overlay_manager = OverlayManager(pipe_name=pipe_name)
+    overlay_manager = OverlayManager()
     overlay_manager.start()  # Ensure OverlayManager is started
     print("✅ OverlayManager initialized successfully")
     print(f"📡 Named pipe server: {overlay_manager.pipe_name}")

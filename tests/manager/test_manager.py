@@ -1,7 +1,7 @@
 import signal
 import threading
 import time
-
+import os
 import pytest
 import win32gui
 
@@ -40,7 +40,7 @@ def patch_timer_and_threads(monkeypatch):
 
 
 def test_add_highlight_window():
-    om = manager.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager()
     om.rectangles.clear()
     # first rectangle
     om.add_highlight_window(7, 7, 7, 7, duration_s=10)
@@ -54,7 +54,7 @@ def test_add_highlight_window():
 
 
 def test_remove_rectangle():
-    om = manager.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager()
     om.rectangles = [{"id": 1, "coords": (0, 0, 1, 1)}]
     om._remove_rectangle(1)
     assert om.rectangles == []
@@ -75,7 +75,7 @@ def test_add_countdown_window_and_tick(monkeypatch):
 
     monkeypatch.setattr(threading, "Timer", NoopTimer)
 
-    om = manager.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager()
     cid = om.add_countdown_window("msg", 3)
     assert cid == 1
     cd = om.countdowns[cid]
@@ -109,7 +109,7 @@ def test_add_and_remove_qrcode_window(monkeypatch):
 
     monkeypatch.setattr(threading, "Timer", NoopTimer)
 
-    om = manager.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager()
     qr_id = om.add_qrcode_window({"data": "x"}, timeout_seconds=0, caption="c")
     assert qr_id == 1
     assert qr_id in om.qrcodes
@@ -118,7 +118,7 @@ def test_add_and_remove_qrcode_window(monkeypatch):
     assert qr_id not in om.qrcodes
 
     # try again on a fresh manager
-    om = manager.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager()
     qr_id = om.add_qrcode_window("foo", timeout_seconds=0, caption=None)
     assert qr_id == 1
     assert qr_id in om.qrcodes
@@ -127,7 +127,7 @@ def test_add_and_remove_qrcode_window(monkeypatch):
 
 
 def test_close_and_update_window():
-    om = manager.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager()
     om.countdowns = {1: {"message": "old", "order": 1}}
     assert om.update_window(1, "new") is True
     assert om.countdowns[1]["message"] == "new"
@@ -136,7 +136,7 @@ def test_close_and_update_window():
 
 
 def test_process_pipe_command_unknown():
-    om = manager.OverlayManager(pipe_name="test")
+    om = manager.OverlayManager()
     resp = om._process_pipe_command({"command": "foo", "args": {}})
     assert resp["status"] == "error"
     assert "Unknown command" in resp["message"]
@@ -174,3 +174,11 @@ def test_main_sets_signals_and_shuts_down(monkeypatch):
     assert signal.SIGTERM in calls
     assert "started" in calls
     assert "shutdown" in calls
+
+
+def test_overlay_manager_env():
+    om = manager.OverlayManager()
+    assert om.pipe_name == r"\\.\pipe\overlay_manager"  # default
+    os.environ["OVERLAY_PIPE_NAME"] = "overlay_manager_env"
+    om_env = manager.OverlayManager()
+    assert om_env.pipe_name == r"\\.\pipe\overlay_manager_env"  # default
