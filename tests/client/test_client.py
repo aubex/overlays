@@ -49,9 +49,9 @@ class TestOverlayClient:
             self.pipe_handle = "H"
 
         monkeypatch.setattr(OverlayClient, "_connect", fake_connect)
-        client = OverlayClient(pipe_name="PIPE", timeout=1234)
+        client = OverlayClient(timeout=1234)
         assert called
-        assert client.pipe_name == "PIPE"
+        assert client.pipe_name == r"\\.\pipe\overlay_manager"
         assert client.timeout == 1234
         assert client.server_available is True
         assert client.pipe_handle == "H"
