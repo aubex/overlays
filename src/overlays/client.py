@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import os
 from types import TracebackType
 from typing import Any, Self
 
@@ -18,9 +19,7 @@ class OverlayClient:
     Gracefully handles cases where the server is unavailable.
     """
 
-    def __init__(
-        self, pipe_name: str = r"\\.\pipe\overlay_manager", timeout: int = 5000
-    ) -> None:
+    def __init__(self, timeout: int = 5000) -> None:
         """
         Initialize the OverlayClient.
 
@@ -29,7 +28,8 @@ class OverlayClient:
             timeout (int): Connection timeout in milliseconds
 
         """
-        self.pipe_name = pipe_name
+        pipe_name = os.environ.get("OVERLAY_PIPE_NAME", "overlay_manager")
+        self.pipe_name = rf"\\.\pipe\{pipe_name}"
         self.timeout = timeout
         self.pipe_handle = None
         self.server_available = False
@@ -377,10 +377,10 @@ class RemoteElapsedTimeWindow:
 _overlay_client: OverlayClient | None = None
 
 
-def get_overlay_client() -> OverlayClient:
+def get_overlay_client(timeout: int = 5000) -> OverlayClient:
     global _overlay_client  # noqa: PLW0603
     if _overlay_client is None:
-        _overlay_client = OverlayClient()
+        _overlay_client = OverlayClient(timeout=timeout)
     return _overlay_client
 
 
@@ -417,5 +417,3 @@ if __name__ == "__main__":
         print(f"Failed to connect to overlay manager: {e}")  # noqa: T201
     except Exception as e:  # noqa: BLE001
         print(f"Error during demo: {e}")  # noqa: T201
-
-_overlay_client: OverlayClient = None
