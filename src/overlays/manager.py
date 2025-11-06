@@ -335,10 +335,20 @@ class OverlayManager:
         return {"status": "error", "message": f"Unknown command {cmd}"}
 
     def _invalidate_rect(self) -> None:
+        # Skip invalidation if we're shutting down
+        if self.shutdown_event.is_set():
+            return
+
         try:
             win32gui.InvalidateRect(self.hwnd, None, True)
-        except pywintypes.error:
-            pass  # Do nothing; handle rest normally
+        except pywintypes.error as e:
+            # Log the failure instead of silently ignoring it
+            logger.warning(
+                "Failed to invalidate window rect (hwnd=%s): %s. "
+                "This may cause stale overlays to remain visible.",
+                self.hwnd,
+                e,
+            )
 
     def add_highlight_window(self, left, top, right, bottom, duration_s):
         rid = self._next_rect_id
@@ -356,6 +366,10 @@ class OverlayManager:
         return rid
 
     def _remove_rectangle(self, rid):
+        # Don't process removals during shutdown
+        if self.shutdown_event.is_set():
+            return
+
         self.rectangles = [r for r in self.rectangles if r["id"] != rid]
         self._invalidate_rect()
 

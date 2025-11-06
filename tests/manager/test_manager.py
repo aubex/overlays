@@ -182,3 +182,86 @@ def test_overlay_manager_env():
     os.environ["OVERLAY_PIPE_NAME"] = "overlay_manager_env"
     om_env = manager.OverlayManager()
     assert om_env.pipe_name == r"\\.\pipe\overlay_manager_env"  # default
+
+
+def test_remove_rectangle_handles_invalidate_failure(monkeypatch, caplog):
+    """
+    Test that when InvalidateRect fails during rectangle removal,
+    a warning is logged to alert about potential stale rectangles on screen.
+
+    This verifies the fix for a bug where:
+    1. Rectangle is removed from the data structure
+    2. InvalidateRect fails (e.g., invalid hwnd)
+    3. Screen never redraws, leaving the rectangle visible
+    """
+    import pywintypes
+    import logging
+
+    # Track InvalidateRect calls
+    invalidate_calls = []
+    invalidate_should_fail = [False]  # Use list to allow mutation in closure
+
+    def mock_invalidate_rect(hwnd, rect, erase):
+        invalidate_calls.append({"hwnd": hwnd, "rect": rect, "erase": erase})
+        # Simulate failure when flag is set
+        if invalidate_should_fail[0]:
+            raise pywintypes.error(1, "InvalidateRect", "Mock error: window handle invalid")
+
+    # Patch InvalidateRect before creating OverlayManager
+    monkeypatch.setattr(win32gui, "InvalidateRect", mock_invalidate_rect)
+
+    om = manager.OverlayManager()
+
+    # Add a rectangle (this should succeed)
+    rid = om.add_highlight_window(10, 10, 100, 100, duration_s=1)
+    assert len(om.rectangles) == 1
+    assert om.rectangles[0]["id"] == rid
+    assert len(invalidate_calls) == 1, "InvalidateRect called once during add"
+
+    # Now make InvalidateRect fail
+    invalidate_should_fail[0] = True
+
+    # Capture logs
+    with caplog.at_level(logging.WARNING):
+        # Try to remove the rectangle
+        om._remove_rectangle(rid)
+
+    # Verify the fix: rectangle is removed and a warning is logged
+    assert len(om.rectangles) == 0, "Rectangle removed from data structure"
+    assert len(invalidate_calls) == 2, "InvalidateRect was called during removal"
+
+    # Verify warning was logged about stale overlays
+    assert any(
+        "Failed to invalidate window rect" in record.message and "stale overlays" in record.message
+        for record in caplog.records
+    ), "Warning should be logged when InvalidateRect fails"
+
+
+def test_remove_rectangle_during_shutdown_is_noop(monkeypatch):
+    """
+    Test that rectangle removal during shutdown doesn't attempt to invalidate
+    the window, preventing errors from timers firing after shutdown.
+    """
+    invalidate_calls = []
+
+    def mock_invalidate_rect(hwnd, rect, erase):
+        invalidate_calls.append({"hwnd": hwnd, "rect": rect, "erase": erase})
+
+    monkeypatch.setattr(win32gui, "InvalidateRect", mock_invalidate_rect)
+
+    om = manager.OverlayManager()
+
+    # Add a rectangle
+    rid = om.add_highlight_window(10, 10, 100, 100, duration_s=1)
+    assert len(om.rectangles) == 1
+    assert len(invalidate_calls) == 1
+
+    # Simulate shutdown
+    om.shutdown_event.set()
+
+    # Try to remove rectangle during shutdown
+    om._remove_rectangle(rid)
+
+    # Rectangle should not be removed and InvalidateRect should not be called again
+    assert len(om.rectangles) == 1, "Rectangle not removed during shutdown"
+    assert len(invalidate_calls) == 1, "InvalidateRect not called during shutdown"
