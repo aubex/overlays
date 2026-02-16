@@ -99,10 +99,17 @@ class CreateQRCodeCommand(Command):
 class CloseWindowCommand(Command):
     def execute(self, overlay_manager, args, reply_queue):
         window_id = args.get("window_id", "")
-        if window_id:
-            overlay_manager.close_window(window_id)
+        if not window_id:
+            reply_queue.put({"status": "error", "message": "Missing window_id"})
+            return
+        found = overlay_manager.close_window(window_id)
+        if found:
             reply_queue.put(
                 {"status": "success", "message": f"Window {window_id} closed"}
+            )
+        else:
+            reply_queue.put(
+                {"status": "error", "message": f"Window {window_id} not found"}
             )
 
 
@@ -110,11 +117,13 @@ class UpdateWindowMessageCommand(Command):
     def execute(self, overlay_manager, args, reply_queue):
         window_id = args.get("window_id", "")
         new_message = args.get("new_message", "")
-        if window_id and new_message:
-            overlay_manager.update_window(window_id, new_message)
+        if not (window_id and new_message):
             reply_queue.put(
-                {"status": "success", "message": f"Window {window_id} updated"}
+                {"status": "error", "message": "Missing window_id or new_message"}
             )
+            return
+        overlay_manager.update_window(window_id, new_message)
+        reply_queue.put({"status": "success", "message": f"Window {window_id} updated"})
 
 
 class TakeBreakCommand(Command):
@@ -233,12 +242,24 @@ class OverlayManager:
             win32gui.PostMessage(self.hwnd, win32con.WM_CLOSE, 0, 0)
         [t.join(timeout=join_timeout) for t in self._threads]
 
+    def _execute_command(self, cmd, args, reply_queue):
+        try:
+            COMMANDS[cmd].execute(self, args, reply_queue)
+        except Exception:
+            logger.exception("Command '%s' failed", cmd)
+            reply_queue.put(
+                {
+                    "status": "error",
+                    "message": f"Command '{cmd}' failed: internal error",
+                }
+            )
+
     def _run_command_thread(self):
         while not self.shutdown_event.is_set():
             try:
                 cmd, args, reply_queue = self.command_queue.get(timeout=1)
                 if cmd in ("take_break", "cancel_break"):
-                    COMMANDS[cmd].execute(self, args, reply_queue)
+                    self._execute_command(cmd, args, reply_queue)
                     continue
                 if self._break_until and time.time() < self._break_until:
                     self._pending_commands.append((cmd, args, reply_queue))
@@ -247,8 +268,8 @@ class OverlayManager:
                     self._break_until = 0
                     while self._pending_commands:
                         p_cmd, p_args, p_reply_queue = self._pending_commands.pop(0)
-                        COMMANDS[p_cmd].execute(self, p_args, p_reply_queue)
-                COMMANDS[cmd].execute(self, args, reply_queue)
+                        self._execute_command(p_cmd, p_args, p_reply_queue)
+                self._execute_command(cmd, args, reply_queue)
             except queue.Empty:
                 continue
 
@@ -257,6 +278,10 @@ class OverlayManager:
 
     def cancel_break(self):
         self._break_until = 0
+        for _, _, reply_queue in self._pending_commands:
+            reply_queue.put(
+                {"status": "error", "message": "Command discarded by cancel_break"}
+            )
         self._pending_commands.clear()
 
     def _handle_pipe_errors(func):
@@ -310,7 +335,7 @@ class OverlayManager:
     @_handle_pipe_errors
     def _handle_pipe_client(self, pipe_handle):
         while not self.shutdown_event.is_set():
-            result, data = win32file.ReadFile(pipe_handle, 4096)
+            result, data = win32file.ReadFile(pipe_handle, 65536)
             if result == 0 and data:
                 message = data.decode("utf-8")
                 logger.debug("Received pipe message: %s", message)
@@ -460,10 +485,21 @@ class OverlayManager:
                     self._invalidate_rect()
             time.sleep(0.1)
 
-    def close_window(self, window_id: int):
+    def close_window(self, window_id: int) -> bool:
         if window_id in self.countdowns:
             del self.countdowns[window_id]
             self._invalidate_rect()
+            return True
+        if window_id in self.qrcodes:
+            del self.qrcodes[window_id]
+            self._invalidate_rect()
+            return True
+        before = len(self.rectangles)
+        self.rectangles = [r for r in self.rectangles if r["id"] != window_id]
+        if len(self.rectangles) < before:
+            self._invalidate_rect()
+            return True
+        return False
 
     def update_window(self, window_id: int, new_msg: str):
         cd = self.countdowns.get(window_id)
