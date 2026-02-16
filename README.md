@@ -82,7 +82,7 @@ Import and instantiate the `OverlayClient` to send overlay commands:
 from overlays.client import OverlayClient
 
 # Create one client to connect to the manager's pipe
-overlay = OverlayClient(pipe_name=r"\\.\pipe\overlay_manager")
+overlay = OverlayClient()
 
 # Create a highlight window
 overlay.create_highlight_window(rect=(100, 100, 400, 300), timeout_seconds=5)
@@ -116,9 +116,9 @@ overlay.cancel_break()
 | `create_elapsed_time_window`   | `message_text: str`                           | Displays elapsed time since creation.           |
 | `create_qrcode_window`  | `data: str \| dict`, `duration: int`, `caption: str`         | Renders a QR code overlay. |
 | `update_window_message` | `window_id: int`, `new_message: str`          | Changes the text of a countdown/elapsed window. |
-| `close_window`          | `window_id: int`                              | Closes a countdown or elapsed window.           |
+| `close_window`          | `window_id: int`                              | Closes any overlay window (countdown, elapsed, highlight, or QR code). |
 | `take_break`            | `duration_seconds: int`                       | Holds incoming commands for a break period.     |
-| `cancel_break`          | *(none)*                                      | Cancels any active break and flushes queue.     |
+| `cancel_break`          | *(none)*                                      | Cancels any active break and discards pending commands. |
 
 ## Graceful Shutdown
 

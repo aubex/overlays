@@ -95,7 +95,7 @@ class OverlayClient:
             win32file.WriteFile(self.pipe_handle, message)
 
             # Read response
-            result, data = win32file.ReadFile(self.pipe_handle, 4096)
+            result, data = win32file.ReadFile(self.pipe_handle, 65536)
             if result == 0 and data:
                 return json.loads(data.decode("utf-8"))
 

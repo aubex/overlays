@@ -131,8 +131,47 @@ def test_close_and_update_window():
     om.countdowns = {1: {"message": "old", "order": 1}}
     assert om.update_window(1, "new") is True
     assert om.countdowns[1]["message"] == "new"
-    om.close_window(1)
+    assert om.close_window(1) is True
     assert 1 not in om.countdowns
+
+
+def test_close_window_closes_all_types(monkeypatch):
+    """close_window should remove highlights, countdowns, and QR codes."""
+
+    class NoopTimer:
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(threading, "Timer", NoopTimer)
+
+    om = manager.OverlayManager()
+
+    # Close a countdown
+    cid = om.add_countdown_window("cd", countdown_seconds=999)
+    assert cid in om.countdowns
+    assert om.close_window(cid) is True
+    assert cid not in om.countdowns
+
+    # Close a QR code
+    qid = om.add_qrcode_window("data", timeout_seconds=999, caption="c")
+    assert qid in om.qrcodes
+    assert om.close_window(qid) is True
+    assert qid not in om.qrcodes
+
+    # Close a highlight rectangle
+    rid = om.add_highlight_window(0, 0, 10, 10, duration_s=999)
+    assert any(r["id"] == rid for r in om.rectangles)
+    assert om.close_window(rid) is True
+    assert not any(r["id"] == rid for r in om.rectangles)
+
+
+def test_close_window_returns_false_for_unknown_id():
+    """close_window should return False when the window_id doesn't exist."""
+    om = manager.OverlayManager()
+    assert om.close_window(9999) is False
 
 
 def test_process_pipe_command_unknown():
@@ -184,6 +223,77 @@ def test_overlay_manager_env():
     assert om_env.pipe_name == r"\\.\pipe\overlay_manager_env"  # default
 
 
+def test_close_command_replies_on_missing_window_id():
+    """CloseWindowCommand must reply even when window_id is missing."""
+    import queue as q
+
+    om = manager.OverlayManager()
+    reply = q.Queue()
+    manager.CloseWindowCommand().execute(om, {}, reply)
+    resp = reply.get(timeout=1)
+    assert resp["status"] == "error"
+    assert "Missing window_id" in resp["message"]
+
+
+def test_close_command_replies_on_not_found():
+    """CloseWindowCommand must reply with error for nonexistent window_id."""
+    import queue as q
+
+    om = manager.OverlayManager()
+    reply = q.Queue()
+    manager.CloseWindowCommand().execute(om, {"window_id": 9999}, reply)
+    resp = reply.get(timeout=1)
+    assert resp["status"] == "error"
+    assert "not found" in resp["message"]
+
+
+def test_update_command_replies_on_missing_args():
+    """UpdateWindowMessageCommand must reply when window_id or new_message is missing."""
+    import queue as q
+
+    om = manager.OverlayManager()
+
+    # Missing both
+    reply = q.Queue()
+    manager.UpdateWindowMessageCommand().execute(om, {}, reply)
+    resp = reply.get(timeout=1)
+    assert resp["status"] == "error"
+
+    # Missing new_message
+    reply = q.Queue()
+    manager.UpdateWindowMessageCommand().execute(om, {"window_id": 1}, reply)
+    resp = reply.get(timeout=1)
+    assert resp["status"] == "error"
+
+
+def test_execute_command_catches_exceptions():
+    """_execute_command should catch exceptions from command execution,
+    send an error reply, and not propagate the exception (which would
+    kill the worker thread).
+    """
+    import queue as q
+
+    om = manager.OverlayManager()
+    om.hwnd = 1
+
+    # Bad command: create_highlight without required 'rect' key raises KeyError
+    bad_reply = q.Queue()
+    om._execute_command("create_highlight", {}, bad_reply)
+
+    bad_resp = bad_reply.get(timeout=1)
+    assert bad_resp["status"] == "error"
+    assert "internal error" in bad_resp["message"]
+
+    # Good command after the bad one should still work
+    good_reply = q.Queue()
+    om._execute_command(
+        "create_countdown", {"message_text": "ok", "countdown_seconds": 5}, good_reply
+    )
+
+    good_resp = good_reply.get(timeout=1)
+    assert good_resp["status"] == "success"
+
+
 def test_remove_rectangle_handles_invalidate_failure(monkeypatch, caplog):
     """
     Test that when InvalidateRect fails during rectangle removal,
@@ -205,7 +315,9 @@ def test_remove_rectangle_handles_invalidate_failure(monkeypatch, caplog):
         invalidate_calls.append({"hwnd": hwnd, "rect": rect, "erase": erase})
         # Simulate failure when flag is set
         if invalidate_should_fail[0]:
-            raise pywintypes.error(1, "InvalidateRect", "Mock error: window handle invalid")
+            raise pywintypes.error(
+                1, "InvalidateRect", "Mock error: window handle invalid"
+            )
 
     # Patch InvalidateRect before creating OverlayManager
     monkeypatch.setattr(win32gui, "InvalidateRect", mock_invalidate_rect)
@@ -232,7 +344,8 @@ def test_remove_rectangle_handles_invalidate_failure(monkeypatch, caplog):
 
     # Verify warning was logged about stale overlays
     assert any(
-        "Failed to invalidate window rect" in record.message and "stale overlays" in record.message
+        "Failed to invalidate window rect" in record.message
+        and "stale overlays" in record.message
         for record in caplog.records
     ), "Warning should be logged when InvalidateRect fails"
 
