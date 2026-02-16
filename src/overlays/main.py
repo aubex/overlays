@@ -4,7 +4,7 @@ from importlib.metadata import version
 
 
 def cross_platform_helper():
-    if "--version" in sys.argv or "-v" in sys.argv:
+    if "--version" in sys.argv:
         print(f"overlays {version('overlays')}")
         return
 
