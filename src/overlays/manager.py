@@ -541,8 +541,10 @@ def signal_handler(sig: int, frame: FrameType | None) -> None:
 
 
 def main() -> None:
-    print("🔧 OverlayManager - Windows Overlay Application")
-    print("================================================")
+    from importlib.metadata import version
+
+    print(f"🔧 OverlayManager v{version('overlays')} - Windows Overlay Application")
+    print("=========================================================")
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     print("✅ Signal handlers configured")
