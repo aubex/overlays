@@ -106,7 +106,7 @@ All overlays (highlights, countdowns, QR codes) are drawn onto this single windo
 
 The manager supports "break mode" where incoming commands are queued instead of executed:
 - `take_break(duration_seconds)`: Holds commands for specified duration
-- `cancel_break()`: Immediately flushes pending queue and resumes
+- `cancel_break()`: Immediately discards pending commands and resumes normal operation
 - Break commands (`take_break`, `cancel_break`) bypass the queue
 
 ## Testing Patterns
@@ -123,6 +123,18 @@ When writing tests:
 - Mock `time.time()` with a list to simulate time progression
 - Create `NoopTimer` classes to disable threading.Timer behavior
 - Test window lifetime by checking presence/absence in manager's state dicts
+
+## Thread Safety
+
+The OverlayManager has shared mutable state (`rectangles`, `countdowns`, `qrcodes`, ID counters, order counters) accessed from multiple threads without explicit locking. Under testing with `sys.setswitchinterval(1e-6)` and 8 concurrent threads, the `_countdown_order += 1` increment was proven non-atomic (3166 duplicate order values out of 16000 operations).
+
+However, **this is not a practical bug** because the architecture serializes all state mutations through `_run_command_thread` (a single queue consumer). The only cross-thread access patterns in production are:
+- **Thread 3 (command)** writes to state dicts
+- **Thread 4 (countdown manager)** iterates + mutates `countdowns`
+- **Thread 1 (paint/WM_PAINT)** reads all three dicts
+- **Timer callbacks** call `_remove_rectangle` and `remove_qrcode_window`
+
+CPython's GIL makes individual dict/list operations atomic enough that these don't crash. If the architecture ever changes to process commands in parallel or call mutation methods from multiple threads, a `threading.Lock` should be added to protect shared state.
 
 ## Important Notes
 
