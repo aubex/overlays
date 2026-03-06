@@ -443,7 +443,7 @@ class StressTestClient:
                 self.log_result(TestResult(f"Close Window {i + 1}", False, 0.0, str(e)))
 
     def test_break_functionality(self) -> None:
-        """Test break and cancel break functionality."""
+        """Test break behavior, including command discard and recovery."""
         logger.info("☕ Testing break functionality...")
 
         if not self.overlay_client.is_available():
@@ -468,8 +468,40 @@ class StressTestClient:
                 )
             )
 
-            # Wait a moment then cancel the break
-            time.sleep(1)
+            if not result:
+                return
+
+            discard_response, discard_duration = self.measure_time(
+                self.overlay_client._send_command,
+                "create_elapsed_time",
+                {"message_text": "This should be discarded during break"},
+            )
+            discarded = (
+                discard_response
+                == {
+                    "status": "ignored",
+                    "reason": "break_active",
+                    "message": "Command discarded during break",
+                }
+                and discard_duration < 1
+            )
+
+            self.log_result(
+                TestResult(
+                    "Discard Command During Break",
+                    discarded,
+                    discard_duration,
+                    ""
+                    if discarded
+                    else f"Unexpected response while paused: {discard_response!r}",
+                    {"response": discard_response},
+                )
+            )
+
+            if discard_response.get("status") == "success":
+                leaked_window_id = discard_response.get("window_id")
+                if leaked_window_id:
+                    self.overlay_client.close_window(leaked_window_id)
 
             result, duration = self.measure_time(self.overlay_client.cancel_break)
 
@@ -481,6 +513,28 @@ class StressTestClient:
                     "" if result else "Failed to cancel break",
                 )
             )
+
+            if not result:
+                return
+
+            window_id, duration = self.measure_time(
+                self.overlay_client.create_elapsed_time_window,
+                "Break finished - commands active again",
+            )
+            resumed = window_id is not None
+
+            self.log_result(
+                TestResult(
+                    "Command After Break",
+                    resumed,
+                    duration,
+                    "" if resumed else "Command still blocked after cancel_break",
+                    {"window_id": window_id},
+                )
+            )
+
+            if window_id:
+                self.active_windows.append(window_id)
 
         except Exception as e:
             self.log_result(TestResult("Break Functionality", False, 0.0, str(e)))

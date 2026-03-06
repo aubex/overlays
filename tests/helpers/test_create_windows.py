@@ -169,13 +169,14 @@ def test_with_remaining(stub_win32):
 
 
 def test_draw_qrcode(monkeypatch):
-    """Should draw QR code modules and caption correctly."""
+    """Should draw QR code modules and restore GDI objects before deletion."""
     calls = []
+    brushes = iter(["bg_brush", "black_brush"])
 
     # Patch brush and pen creation, FillRect, Rectangle, text functions
     def fake_CreateSolidBrush(color):
         calls.append(("CreateSolidBrush", color))
-        return "brush"
+        return next(brushes)
 
     def fake_FillRect(hdc, rect, brush):
         calls.append(("FillRect", hdc, rect, brush))
@@ -186,6 +187,12 @@ def test_draw_qrcode(monkeypatch):
 
     def fake_SelectObject(hdc, obj):
         calls.append(("SelectObject", hdc, obj))
+        old_handles = {
+            "font": "old_font",
+            "pen": "old_pen",
+            "black_brush": "old_brush",
+        }
+        return old_handles.get(obj)
 
     def fake_Rectangle(hdc, x0, y0, x1, y1):
         calls.append(("Rectangle", hdc, x0, y0, x1, y1))
@@ -202,6 +209,7 @@ def test_draw_qrcode(monkeypatch):
     def fake_DeleteObject(obj):
         calls.append(("DeleteObject", obj))
 
+    monkeypatch.setattr(win32gui, "GetStockObject", lambda obj: "font")
     for mod in [
         "CreateSolidBrush",
         "FillRect",
@@ -232,13 +240,28 @@ def test_draw_qrcode(monkeypatch):
 
     # Check background fill
     assert ("CreateSolidBrush", win32api.RGB(255, 255, 255)) in calls
-    assert ("FillRect", 102, (-10, -5, 16, 21), "brush") in calls
-    assert ("DeleteObject", "brush") in calls
+    assert ("FillRect", 102, (-10, -5, 16, 21), "bg_brush") in calls
+    assert ("DeleteObject", "bg_brush") in calls
 
     # Check module draws: two modules for bits==1
     # First module at (left+1, top+1) => (1,1) to (3,3)
-    assert ("CreatePen", win32con.PS_SOLID, 0, win32api.RGB(0, 0, 0)) in calls
+    assert calls.count(("CreatePen", win32con.PS_SOLID, 0, win32api.RGB(0, 0, 0))) == 1
+    assert calls.count(("CreateSolidBrush", win32api.RGB(0, 0, 0))) == 1
     assert ("Rectangle", hdc, 1, 1, 3, 3) in calls
+    assert ("Rectangle", hdc, 3, 3, 5, 5) in calls
+
+    select_pen = calls.index(("SelectObject", hdc, "pen"))
+    select_brush = calls.index(("SelectObject", hdc, "black_brush"))
+    restore_pen = calls.index(("SelectObject", hdc, "old_pen"))
+    restore_brush = calls.index(("SelectObject", hdc, "old_brush"))
+    delete_pen = calls.index(("DeleteObject", "pen"))
+    delete_brush = calls.index(("DeleteObject", "black_brush"))
+
+    assert select_pen < restore_pen < delete_pen
+    assert select_brush < restore_brush < delete_brush
+    assert calls.index(("SelectObject", hdc, "font")) < calls.index(
+        ("SelectObject", hdc, "old_font")
+    )
 
     # Check caption draw
     caption_rect = (0, 6 + 5, 6, 6 + 5 + 20)

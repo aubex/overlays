@@ -1,5 +1,6 @@
 from unittest.mock import Mock
 
+import overlays.client as client_module
 import pytest
 import pywintypes
 import win32file
@@ -182,17 +183,79 @@ class TestOverlayClient:
             assert c is available_client
         spy.assert_called_once()
 
-    def test_get_overlay_client_singleton(self, monkeypatch):
-        # First call creates, second returns same
-        monkeypatch.setattr(OverlayClient, "_connect", lambda self: None)
-        # Reset module var
-        import importlib
+    def test_get_overlay_client_reuses_available_singleton(self, monkeypatch):
+        class FakeOverlayClient:
+            instances = []
 
-        mod = importlib.import_module("client")
-        mod._overlay_client = None
-        c1 = get_overlay_client()
-        c2 = get_overlay_client()
+            def __init__(self, timeout=5000):
+                self.timeout = timeout
+                self.server_available = True
+                self.pipe_handle = "HANDLE"
+                FakeOverlayClient.instances.append(self)
+
+            def is_available(self):
+                return True
+
+        monkeypatch.setattr(client_module, "OverlayClient", FakeOverlayClient)
+        monkeypatch.setattr(client_module, "_overlay_client", None)
+
+        c1 = get_overlay_client(timeout=123)
+        c2 = get_overlay_client(timeout=999)
+
         assert c1 is c2
+        assert len(FakeOverlayClient.instances) == 1
+        assert c1.timeout == 123
+
+    def test_get_overlay_client_retries_after_initial_unavailability(self, monkeypatch):
+        class FakeOverlayClient:
+            created = 0
+
+            def __init__(self, timeout=5000):
+                FakeOverlayClient.created += 1
+                self.timeout = timeout
+                self.server_available = FakeOverlayClient.created > 1
+                self.pipe_handle = "HANDLE" if self.server_available else None
+
+            def is_available(self):
+                return self.server_available and self.pipe_handle is not None
+
+        monkeypatch.setattr(client_module, "OverlayClient", FakeOverlayClient)
+        monkeypatch.setattr(client_module, "_overlay_client", None)
+
+        first = get_overlay_client(timeout=111)
+        second = get_overlay_client(timeout=222)
+
+        assert first is not second
+        assert first.is_available() is False
+        assert second.is_available() is True
+        assert second.timeout == 222
+
+    def test_get_overlay_client_recreates_disconnected_singleton(self, monkeypatch):
+        class FakeOverlayClient:
+            instances = []
+
+            def __init__(self, timeout=5000):
+                self.timeout = timeout
+                self.server_available = True
+                self.pipe_handle = "HANDLE"
+                FakeOverlayClient.instances.append(self)
+
+            def is_available(self):
+                return self.server_available and self.pipe_handle is not None
+
+        monkeypatch.setattr(client_module, "OverlayClient", FakeOverlayClient)
+        monkeypatch.setattr(client_module, "_overlay_client", None)
+
+        first = get_overlay_client(timeout=111)
+        first.server_available = False
+        first.pipe_handle = None
+
+        second = get_overlay_client(timeout=222)
+
+        assert first is not second
+        assert second.is_available() is True
+        assert len(FakeOverlayClient.instances) == 2
+        assert second.timeout == 222
 
 
 class TestRemoteElapsedTimeWindow:

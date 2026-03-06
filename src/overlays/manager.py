@@ -122,8 +122,13 @@ class UpdateWindowMessageCommand(Command):
                 {"status": "error", "message": "Missing window_id or new_message"}
             )
             return
-        overlay_manager.update_window(window_id, new_message)
-        reply_queue.put({"status": "success", "message": f"Window {window_id} updated"})
+        updated = overlay_manager.update_window(window_id, new_message)
+        if updated:
+            reply_queue.put(
+                {"status": "success", "message": f"Window {window_id} updated"}
+            )
+            return
+        reply_queue.put({"status": "error", "message": f"Window {window_id} not found"})
 
 
 class TakeBreakCommand(Command):
@@ -173,7 +178,6 @@ class OverlayManager:
         self.shutdown_event = threading.Event()
         self.command_queue = queue.Queue()
         self._break_until = 0.0
-        self._pending_commands = []
         self.hwnd = None
         self._transparent_key = win32api.RGB(255, 0, 255)
         self._ready = threading.Event()
@@ -261,14 +265,11 @@ class OverlayManager:
                 if cmd in ("take_break", "cancel_break"):
                     self._execute_command(cmd, args, reply_queue)
                     continue
-                if self._break_until and time.time() < self._break_until:
-                    self._pending_commands.append((cmd, args, reply_queue))
-                    continue
-                if self._break_until and time.time() >= self._break_until:
+                if self._break_until:
+                    if time.time() < self._break_until:
+                        self._discard_command_during_break(reply_queue)
+                        continue
                     self._break_until = 0
-                    while self._pending_commands:
-                        p_cmd, p_args, p_reply_queue = self._pending_commands.pop(0)
-                        self._execute_command(p_cmd, p_args, p_reply_queue)
                 self._execute_command(cmd, args, reply_queue)
             except queue.Empty:
                 continue
@@ -278,11 +279,15 @@ class OverlayManager:
 
     def cancel_break(self):
         self._break_until = 0
-        for _, _, reply_queue in self._pending_commands:
-            reply_queue.put(
-                {"status": "error", "message": "Command discarded by cancel_break"}
-            )
-        self._pending_commands.clear()
+
+    def _discard_command_during_break(self, reply_queue):
+        reply_queue.put(
+            {
+                "status": "ignored",
+                "reason": "break_active",
+                "message": "Command discarded during break",
+            }
+        )
 
     def _handle_pipe_errors(func):
         def wrapper(*args, **kwargs):

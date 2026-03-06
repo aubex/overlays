@@ -379,7 +379,7 @@ _overlay_client: OverlayClient | None = None
 
 def get_overlay_client(timeout: int = 5000) -> OverlayClient:
     global _overlay_client  # noqa: PLW0603
-    if _overlay_client is None:
+    if _overlay_client is None or not _overlay_client.is_available():
         _overlay_client = OverlayClient(timeout=timeout)
     return _overlay_client
 

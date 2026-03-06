@@ -7,6 +7,8 @@ import win32gui
 
 from overlays import manager
 
+REAL_RUN_COMMAND_THREAD = manager.OverlayManager._run_command_thread
+
 
 # Dummy Timer to execute callbacks immediately
 class DummyTimer:
@@ -264,6 +266,134 @@ def test_update_command_replies_on_missing_args():
     manager.UpdateWindowMessageCommand().execute(om, {"window_id": 1}, reply)
     resp = reply.get(timeout=1)
     assert resp["status"] == "error"
+
+
+def test_update_command_replies_on_not_found():
+    """UpdateWindowMessageCommand must error when the target window does not exist."""
+    import queue as q
+
+    om = manager.OverlayManager()
+    reply = q.Queue()
+
+    manager.UpdateWindowMessageCommand().execute(
+        om, {"window_id": 9999, "new_message": "missing"}, reply
+    )
+    resp = reply.get(timeout=1)
+
+    assert resp["status"] == "error"
+    assert "not found" in resp["message"]
+
+
+def test_break_discards_commands_immediately(monkeypatch):
+    om = manager.OverlayManager()
+    om._invalidate_rect = lambda: None
+    monkeypatch.setattr(time, "sleep", lambda _: None)
+
+    worker = threading.Thread(target=REAL_RUN_COMMAND_THREAD, args=(om,), daemon=True)
+    worker.start()
+    try:
+        assert om.take_break(30) is None
+
+        start = time.perf_counter()
+        response = om._process_pipe_command(
+            {
+                "command": "create_countdown",
+                "args": {"message_text": "held", "countdown_seconds": 5},
+            }
+        )
+        duration = time.perf_counter() - start
+
+        assert response == {
+            "status": "ignored",
+            "reason": "break_active",
+            "message": "Command discarded during break",
+        }
+        assert duration < 1
+        assert om.countdowns == {}
+        assert om.rectangles == []
+        assert om.qrcodes == {}
+    finally:
+        om.shutdown_event.set()
+        worker.join(timeout=1)
+
+
+def test_discarded_break_command_is_not_replayed_after_break_expires(monkeypatch):
+    om = manager.OverlayManager()
+    om._invalidate_rect = lambda: None
+    worker = threading.Thread(target=REAL_RUN_COMMAND_THREAD, args=(om,), daemon=True)
+    worker.start()
+    try:
+        om.take_break(0.2)
+
+        ignored = om._process_pipe_command(
+            {
+                "command": "create_countdown",
+                "args": {"message_text": "discard me", "countdown_seconds": 5},
+            }
+        )
+        assert ignored["status"] == "ignored"
+
+        time.sleep(0.3)
+
+        created = om._process_pipe_command(
+            {
+                "command": "create_countdown",
+                "args": {"message_text": "keep me", "countdown_seconds": 5},
+            }
+        )
+
+        assert created["status"] == "success"
+        assert list(om.countdowns) == [created["window_id"]]
+        assert om.countdowns[created["window_id"]]["message"] == "keep me"
+    finally:
+        om.shutdown_event.set()
+        worker.join(timeout=1)
+
+
+def test_cancel_break_allows_next_command_without_replaying_discarded_ones():
+    om = manager.OverlayManager()
+    om._invalidate_rect = lambda: None
+    worker = threading.Thread(target=REAL_RUN_COMMAND_THREAD, args=(om,), daemon=True)
+    worker.start()
+    try:
+        om.take_break(30)
+
+        ignored = om._process_pipe_command(
+            {
+                "command": "create_countdown",
+                "args": {"message_text": "discard me", "countdown_seconds": 5},
+            }
+        )
+        assert ignored["status"] == "ignored"
+
+        canceled = om._process_pipe_command({"command": "cancel_break", "args": {}})
+        assert canceled == {"status": "success", "message": "Break canceled"}
+
+        created = om._process_pipe_command(
+            {
+                "command": "create_countdown",
+                "args": {"message_text": "after cancel", "countdown_seconds": 5},
+            }
+        )
+        assert created["status"] == "success"
+        assert list(om.countdowns) == [created["window_id"]]
+        assert om.countdowns[created["window_id"]]["message"] == "after cancel"
+    finally:
+        om.shutdown_event.set()
+        worker.join(timeout=1)
+
+
+def test_break_discard_reply_contract():
+    om = manager.OverlayManager()
+    reply = manager.queue.Queue()
+
+    om._discard_command_during_break(reply)
+
+    assert reply.get(timeout=1) == {
+        "status": "ignored",
+        "reason": "break_active",
+        "message": "Command discarded during break",
+    }
 
 
 def test_execute_command_catches_exceptions():
