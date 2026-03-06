@@ -120,61 +120,69 @@ def draw_qrcode(
 
     # 1) select a known font so measurements are reliable
     font = win32gui.GetStockObject(win32con.DEVICE_DEFAULT_FONT)
-    win32gui.SelectObject(hdc, font)
+    old_font = win32gui.SelectObject(hdc, font)
 
-    # 2) measure text size
-    txt_w, txt_h = (0, 0)
-    if caption:
-        txt_w, txt_h = win32gui.GetTextExtentPoint32(hdc, caption)
+    try:
+        # 2) measure text size
+        txt_w, txt_h = (0, 0)
+        if caption:
+            txt_w, txt_h = win32gui.GetTextExtentPoint32(hdc, caption)
 
-    qr_width = right - left
+        qr_width = right - left
 
-    # 2) figure out horizontal expansion
-    #    if caption is wider than the QR, we need to grow left/right
-    extra = max(0, txt_w - qr_width)
-    # split the extra evenly (if odd, right gets the extra pixel)
-    left_expansion = extra // 2
-    right_expansion = extra - left_expansion
+        # 2) figure out horizontal expansion
+        #    if caption is wider than the QR, we need to grow left/right
+        extra = max(0, txt_w - qr_width)
+        # split the extra evenly (if odd, right gets the extra pixel)
+        left_expansion = extra // 2
+        right_expansion = extra - left_expansion
 
-    # 3) add your own margin if you like
-    h_margin = 5
-    v_margin = 5
+        # 3) add your own margin if you like
+        h_margin = 5
+        v_margin = 5
 
-    # 3) extend white background to include caption area
-    bg_bottom = bottom + (txt_h + h_margin if caption else 0)
-    bg_left = left - left_expansion - h_margin
-    bg_right = right + right_expansion + h_margin
-    bg_brush = win32gui.CreateSolidBrush(win32api.RGB(255, 255, 255))
-    win32gui.FillRect(hdc, (bg_left, top - v_margin, bg_right, bg_bottom), bg_brush)
-    win32gui.DeleteObject(bg_brush)
+        # 3) extend white background to include caption area
+        bg_bottom = bottom + (txt_h + h_margin if caption else 0)
+        bg_left = left - left_expansion - h_margin
+        bg_right = right + right_expansion + h_margin
+        bg_brush = win32gui.CreateSolidBrush(win32api.RGB(255, 255, 255))
+        win32gui.FillRect(hdc, (bg_left, top - v_margin, bg_right, bg_bottom), bg_brush)
+        win32gui.DeleteObject(bg_brush)
 
-    # 4) draw QR modules
-    for ry, row in enumerate(qr_code["matrix"]):
-        for cx, bit in enumerate(row):
-            if not bit:
-                continue
-            x0 = left + pad + cx * qr_code["pix_per_mod"]
-            y0 = top + pad + ry * qr_code["pix_per_mod"]
-            x1 = x0 + qr_code["pix_per_mod"]
-            y1 = y0 + qr_code["pix_per_mod"]
-            pen = win32gui.CreatePen(win32con.PS_SOLID, 0, win32api.RGB(0, 0, 0))
-            brush = win32gui.CreateSolidBrush(win32api.RGB(0, 0, 0))
-            win32gui.SelectObject(hdc, pen)
-            win32gui.SelectObject(hdc, brush)
-            win32gui.Rectangle(hdc, x0, y0, x1, y1)
-            win32gui.DeleteObject(pen)
-            win32gui.DeleteObject(brush)
+        # Reuse a single pen/brush pair and restore previous objects before deletion.
+        qr_pen = win32gui.CreatePen(win32con.PS_SOLID, 0, win32api.RGB(0, 0, 0))
+        qr_brush = win32gui.CreateSolidBrush(win32api.RGB(0, 0, 0))
+        old_pen = win32gui.SelectObject(hdc, qr_pen)
+        old_brush = win32gui.SelectObject(hdc, qr_brush)
+        try:
+            # 4) draw QR modules
+            for ry, row in enumerate(qr_code["matrix"]):
+                for cx, bit in enumerate(row):
+                    if not bit:
+                        continue
+                    x0 = left + pad + cx * qr_code["pix_per_mod"]
+                    y0 = top + pad + ry * qr_code["pix_per_mod"]
+                    x1 = x0 + qr_code["pix_per_mod"]
+                    y1 = y0 + qr_code["pix_per_mod"]
+                    win32gui.Rectangle(hdc, x0, y0, x1, y1)
+        finally:
+            win32gui.SelectObject(hdc, old_pen)
+            win32gui.SelectObject(hdc, old_brush)
+            win32gui.DeleteObject(qr_pen)
+            win32gui.DeleteObject(qr_brush)
 
-    # 5) draw caption inside the white box, centered
-    if caption:
-        caption_top = bottom + (v_margin // 2)
-        caption_rect = (bg_left, caption_top, bg_right, caption_top + txt_h)
-        win32gui.SetTextColor(hdc, win32api.RGB(0, 0, 0))
-        win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
-        win32gui.DrawText(
-            hdc,
-            caption,
-            -1,
-            caption_rect,
-            win32con.DT_CENTER | win32con.DT_SINGLELINE | win32con.DT_VCENTER,
-        )
+        # 5) draw caption inside the white box, centered
+        if caption:
+            caption_top = bottom + (v_margin // 2)
+            caption_rect = (bg_left, caption_top, bg_right, caption_top + txt_h)
+            win32gui.SetTextColor(hdc, win32api.RGB(0, 0, 0))
+            win32gui.SetBkMode(hdc, win32con.TRANSPARENT)
+            win32gui.DrawText(
+                hdc,
+                caption,
+                -1,
+                caption_rect,
+                win32con.DT_CENTER | win32con.DT_SINGLELINE | win32con.DT_VCENTER,
+            )
+    finally:
+        win32gui.SelectObject(hdc, old_font)

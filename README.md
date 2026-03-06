@@ -117,8 +117,8 @@ overlay.cancel_break()
 | `create_qrcode_window`  | `data: str \| dict`, `duration: int`, `caption: str`         | Renders a QR code overlay. |
 | `update_window_message` | `window_id: int`, `new_message: str`          | Changes the text of a countdown/elapsed window. |
 | `close_window`          | `window_id: int`                              | Closes any overlay window (countdown, elapsed, highlight, or QR code). |
-| `take_break`            | `duration_seconds: int`                       | Holds incoming commands for a break period.     |
-| `cancel_break`          | *(none)*                                      | Cancels any active break and discards pending commands. |
+| `take_break`            | `duration_seconds: int`                       | Discards incoming non-break commands for a break period. |
+| `cancel_break`          | *(none)*                                      | Cancels any active break so later commands are processed again. |
 
 ## Graceful Shutdown
 
