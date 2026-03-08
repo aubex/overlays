@@ -76,8 +76,9 @@ jobs:
           $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
           $zip = Get-ChildItem .tmp-dist\release\*.zip | Select-Object -ExpandProperty FullName
           $assets = @($wheel, $zip, ".tmp-dist\release\SHA256SUMS.txt")
-          gh release view ${{ github.ref_name }} *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $tag = "${{ github.ref_name }}"
+          $existing = gh release list --limit 1000 --json tagName | ConvertFrom-Json | Where-Object { $_.tagName -eq $tag }
+          if ($existing) {
             gh release upload ${{ github.ref_name }} $assets --clobber
           } else {
             gh release create ${{ github.ref_name }} $assets --generate-notes
