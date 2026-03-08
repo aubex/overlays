@@ -1,4 +1,4 @@
-name: Test & release overlays
+name: Test overlays
 
 on:
   push:
@@ -10,10 +10,10 @@ jobs:
   test:
     name: Test overlays
     runs-on: windows-latest
-    env:
-      PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -24,36 +24,29 @@ jobs:
           version: "latest"
       - name: Install dependencies
         run: uv sync --dev
+      - name: Build Rust server
+        run: cargo build --manifest-path rust/overlays-server/Cargo.toml
+      - name: Run Rust tests
+        run: cargo test --manifest-path rust/overlays-server/Cargo.toml
       - name: lint
-        run: uv run --dev ruff check src
+        run: uv run --dev ruff check src tests scripts hatch_build.py
       - name: format
-        run: uv run --dev ruff format --check src
+        run: uv run --dev ruff format --check src tests scripts hatch_build.py
       - name: Run tests
         run: uv run --dev pytest -v
-
-  release:
-    name: Release overlays
-    environment: prod
-    runs-on: windows-latest
-    env:
-      PYTHONPATH: ${{ github.workspace }}
-    needs: test
-    if: github.ref == 'refs/heads/prod'
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Set up just
-        uses: extractions/setup-just@v2
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v1
-        with:
-          version: "latest"
-      - name: Install dependencies
-        run: uv sync
-      - name: Build
-        run: uv build
-      - name: Publish
-        run: uv publish -t ${{ secrets.PYPI_TOKEN }}
+      - name: Build release Rust server
+        run: cargo build --release --manifest-path rust/overlays-server/Cargo.toml
+      - name: Stage bundled server binary
+        run: uv run --dev python scripts/stage_server_binary.py
+      - name: Build wheel
+        run: uv build --wheel
+      - name: Verify wheel contents
+        shell: powershell
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
+          uv run --dev python scripts/verify_wheel.py $wheel
+      - name: Smoke test packaged wheel
+        shell: powershell
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
+          uv run --dev python scripts/smoke_test_wheel.py $wheel

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class OverlayClient:
     """
-    Client for communicating with OverlayManager via named pipe.
+    Client for communicating with the overlay server via named pipe.
     Can be used from a separate Python process.
     Gracefully handles cases where the server is unavailable.
     """
@@ -58,7 +58,7 @@ class OverlayClient:
             )
 
             self.server_available = True
-            logger.info("Connected to overlay manager pipe")
+            logger.info("Connected to overlay server pipe")
 
         except pywintypes.error as e:
             self.server_available = False
@@ -70,7 +70,7 @@ class OverlayClient:
         self, command: str, args: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """
-        Send a command to the overlay manager and return the response.
+        Send a command to the overlay server and return the response.
         Returns empty success response if server unavailable.
 
         Args:
@@ -82,7 +82,7 @@ class OverlayClient:
 
         """
         if not self.server_available or not self.pipe_handle:
-            msg = f"Ignoring command '{command}' - overlay manager not available"
+            msg = f"Ignoring command '{command}' - overlay server not available"
             logger.debug(msg)
             return {"status": "ignored", "reason": "server_unavailable"}
 
@@ -120,7 +120,7 @@ class OverlayClient:
 
     def _handle_connection_lost(self) -> None:
         """Handle lost connection by marking server as unavailable."""
-        logger.debug("Connection to overlay manager lost")
+        logger.debug("Connection to overlay server lost")
         self.server_available = False
         self.pipe_handle = None
 
@@ -238,7 +238,7 @@ class OverlayClient:
 
     def take_break(self, duration_seconds: int) -> bool:
         """
-        Tell the overlay manager to take a break.
+        Tell the overlay server to take a break.
 
         Args:
             duration_seconds (int): Break duration in seconds
@@ -265,7 +265,7 @@ class OverlayClient:
 
     def is_available(self) -> bool:
         """
-        Check if the overlay manager server is available.
+        Check if the overlay server is available.
 
         Returns:
             bool: True if server is available and connected
@@ -285,7 +285,7 @@ class OverlayClient:
             self.pipe_handle = None
 
         self.server_available = False
-        logger.debug("Disconnected from overlay manager pipe")
+        logger.debug("Disconnected from overlay server pipe")
 
     def __enter__(self) -> Self:
         """Context manager entry."""
@@ -302,7 +302,7 @@ class OverlayClient:
 
 
 class RemoteElapsedTimeWindow:
-    """A client-side control for an elapsed time window running in the overlay manager."""
+    """A client-side control for an elapsed-time window running in the overlay server."""
 
     def __init__(self, window_id: int | None, client: OverlayClient) -> None:
         """
@@ -387,11 +387,11 @@ def get_overlay_client(timeout: int = 5000) -> OverlayClient:
 if __name__ == "__main__":
     """
     Run this script to test the OverlayClient.
-    Make sure the OverlayManager server is running first!
+    Make sure the overlay server is running first.
     """
     print("OverlayClient Test Suite")  # noqa: T201
     print("=" * 40)  # noqa: T201
-    print("Make sure the OverlayManager server is running before starting these tests.")  # noqa: T201
+    print("Make sure the overlay server is running before starting these tests.")  # noqa: T201
     input("Press Enter to continue...")
 
     try:
@@ -414,6 +414,6 @@ if __name__ == "__main__":
             print("Remote window control demo completed!")  # noqa: T201
 
     except ConnectionError as e:
-        print(f"Failed to connect to overlay manager: {e}")  # noqa: T201
+        print(f"Failed to connect to overlay server: {e}")  # noqa: T201
     except Exception as e:  # noqa: BLE001
         print(f"Error during demo: {e}")  # noqa: T201

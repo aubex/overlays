@@ -4,8 +4,12 @@ __pycache__/
 build/
 dist/
 wheels/
+.tmp-dist/
 *.egg-info
 
 # Virtual environments
 .venv
 .python-version
+
+# Rust build output
+rust/overlays-server/target/
