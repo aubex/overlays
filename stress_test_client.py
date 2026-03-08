@@ -1,7 +1,7 @@
 """
-Stress Test Client for OverlayManager
+Stress test client for the overlays server.
 
-This client is designed to stress test the OverlayManager implementation by:
+This client is designed to stress test the server implementation by:
 - Sending rapid requests
 - Testing all available functionality
 - Measuring performance and response times
@@ -122,7 +122,7 @@ class TestResult:
 
 
 class StressTestClient:
-    """Comprehensive stress testing client for OverlayManager."""
+    """Comprehensive stress testing client for the overlay server."""
 
     def __init__(self, timeout: int = 5000):
         """
@@ -176,7 +176,7 @@ class StressTestClient:
             raise e
 
     def test_basic_connectivity(self) -> None:
-        """Test basic connection to the overlay manager."""
+        """Test basic connection to the overlay server."""
         logger.info("🔌 Testing basic connectivity...")
 
         try:
@@ -852,7 +852,7 @@ class StressTestClient:
         """Run the complete stress test suite."""
         self.test_start_time = time.time()
 
-        print("🚀 Starting OverlayManager Stress Test Suite")
+        print("🚀 Starting overlay server stress test suite")
         print("=" * 60)
 
         try:
@@ -885,10 +885,10 @@ class StressTestClient:
 
 def main():
     """Main entry point for the stress test client."""
-    print("🧪 OverlayManager Stress Test Client")
+    print("🧪 Overlay Server Stress Test Client")
     print("=" * 50)
-    print("This will stress test the OverlayManager implementation.")
-    print("Make sure the OverlayManager server is running!")
+    print("This will stress test the Rust overlay server.")
+    print("Make sure the overlay server is running.")
     print()
 
     response = (

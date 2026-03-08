@@ -1,133 +1,108 @@
 # overlays
 
-A lightweight Windows overlay manager and client library for creating click through overlay windows: highlights, countdowns, elapsed timers, and QR codes, all communicated over a named pipe. This project is licensed under the Apache License 2.0. See the LICENSE file for details.
+A Windows overlay server with a Python client library. The published `overlays` wheel bundles the
+Rust `overlays-server.exe`, so users can start the server directly from the installed package.
 
-![OverlayManager in action](static/stress_test.gif)
+![Overlay server in action](static/stress_test.gif)
 
-## Features
+## Install And Run
 
-* **Highlight Windows**: Draw colored rectangles around screen regions for attention-grabbing highlights.
-* **Countdown Timers**: Display a countdown clock with a custom message.
-* **Elapsed Time Windows**: Track and display elapsed time since creation.
-* **QR Code Overlays**: Render QR codes with captions.
-* **Named-Pipe IPC**: Send commands from your application to the overlay manager via a simple pipe.
-* **Graceful Shutdown**: Press `Ctrl+C` or send `SIGTERM` to clean up windows and threads.
+- Windows 10 or later
+- Python 3.10+ for the packaged launcher and client library
 
-## Requirements
+Run the packaged server without installing anything permanently:
 
-* Windows 10 or later (older Versions might work but aren't supported)
-* Python 3.10+
-* Dependencies: `pywin32`, `qrcode`
-
-## Getting Started
-
-### 1a. Run the Overlay Manager
-
-The overlay manager hosts a named-pipe server and listens for overlay commands. \
-To run the manager, simply use the following [uv](https://docs.astral.sh/uv/) command:
-
-```bash
+```powershell
 uvx overlays
 ```
 
-You should see the following output:
+After installing the package, either entry point starts the bundled server in the foreground:
 
-```
-🔧 OverlayManager - Windows Overlay Application
-================================================
-✅ Signal handlers configured
-🚀 Starting OverlayManager...
-✅ OverlayManager initialized successfully
-📡 Named pipe server: \\.\pipe\overlay_manager
-🎯 Application ready - overlay windows can now be created
-💡 Press Ctrl+C to shutdown gracefully
+```powershell
+overlays
+overlays-server
 ```
 
-### 1b. Run the Overlay Manager with env vars
+Set `OVERLAY_PIPE_NAME` if you want a different named pipe:
 
-Specify your environment variables in your .env file or in your terminal, i.e. `OVERLAY_PIPE_NAME="overlay_manager_env"`
-
-Afterwards run the overlay manager:
-
-```bash
+```powershell
+$env:OVERLAY_PIPE_NAME="overlay_manager_env"
 uvx overlays
 ```
 
-You should see the following allowed arguments:
-```
-🔧 OverlayManager - Windows Overlay Application
-================================================
-✅ Signal handlers configured
-🚀 Starting OverlayManager...
-✅ OverlayManager initialized successfully
-📡 Named pipe server: \\.\pipe\overlay_manager_env
-🎯 Application ready - overlay windows can now be created
-💡 Press Ctrl+C to shutdown gracefully
-```
+The server listens on `\\.\pipe\{OVERLAY_PIPE_NAME}` and defaults to
+`\\.\pipe\overlay_manager`.
 
-Supported env vars:
+## Standalone Binary
 
-| Variable | Description                        |
-|-----------|------------------------------------|
-| OVERLAY_PIPE_NAME | Defines the name of the win32 pipe |
+GitHub Releases also publish a portable Windows zip named
+`overlays-server-v<version>-windows-x64.zip`. It contains:
 
+- `overlays-server.exe`
+- `README.txt`
+- `SHA256SUMS.txt`
 
-
-
-### 2. Embed the OverlayClient in Your Code
-
-Import and instantiate the `OverlayClient` to send overlay commands:
+## Use The Python Client
 
 ```python
 from overlays.client import OverlayClient
 
-# Create one client to connect to the manager's pipe
 overlay = OverlayClient()
 
-# Create a highlight window
 overlay.create_highlight_window(rect=(100, 100, 400, 300), timeout_seconds=5)
-
-# Create a 10-second countdown
 overlay.create_countdown_window(message_text="Get ready!", countdown_seconds=10)
-
-# Create an elapsed-time window
 overlay.create_elapsed_time_window(message_text="Session Length")
-
-# Show a QR code for some data
-overlay.create_qrcode_window(data={"url": "https://example.com"}, duration=15, caption="Scan me")
-
-# Update a window's message
+overlay.create_qrcode_window(
+    data={"url": "https://example.com"},
+    duration=15,
+    caption="Scan me",
+)
 overlay.update_window_message(window_id=2, new_message="Halfway there...")
-
-# Close a specific window
 overlay.close_window(window_id=1)
-
-# Take and cancel breaks
 overlay.take_break(duration_seconds=60)
 overlay.cancel_break()
 ```
 
-## IPC Commands Reference
+## Development
 
-| Command                 | Args                                          | Description                                     |
-| ----------------------- | --------------------------------------------- | ----------------------------------------------- |
-| `create_highlight_window`      | `rect: (l, t, r, b)`, `timeout_seconds: int`  | Shows a colored rectangle for a duration.       |
-| `create_countdown_window`      | `message_text: str`, `countdown_seconds: int` | Starts a countdown timer.                       |
-| `create_elapsed_time_window`   | `message_text: str`                           | Displays elapsed time since creation.           |
-| `create_qrcode_window`  | `data: str \| dict`, `duration: int`, `caption: str`         | Renders a QR code overlay. |
-| `update_window_message` | `window_id: int`, `new_message: str`          | Changes the text of a countdown/elapsed window. |
-| `close_window`          | `window_id: int`                              | Closes any overlay window (countdown, elapsed, highlight, or QR code). |
-| `take_break`            | `duration_seconds: int`                       | Discards incoming non-break commands for a break period. |
-| `cancel_break`          | *(none)*                                      | Cancels any active break so later commands are processed again. |
+Development requires Rust stable in addition to Python.
 
-## Graceful Shutdown
+Install Python dependencies:
 
-Press `Ctrl+C` in the console running `main.py`, or send a `SIGTERM` signal. The manager will clean up all open windows and exit.
+```bash
+uv sync --dev
+```
 
-## Contributing
-Contributions are always welcome! \
-The following steps should be used:
+Run the Rust server from source:
 
-1. Fork the repo.
-2. Create a feature branch.
-3. Submit a pull request—happy to review improvements!
+```bash
+cargo run --manifest-path rust/overlays-server/Cargo.toml
+```
+
+Build and test the Rust server:
+
+```bash
+cargo build --manifest-path rust/overlays-server/Cargo.toml
+cargo test --manifest-path rust/overlays-server/Cargo.toml
+```
+
+Run the Python tests, including client compatibility checks against the built Rust binary:
+
+```bash
+uv run pytest -v
+```
+
+If the compatibility tests need an explicit server executable path, set `OVERLAYS_SERVER_BIN`.
+
+## IPC Commands
+
+| Command | Args | Description |
+| --- | --- | --- |
+| `create_highlight_window` | `rect: (l, t, r, b)`, `timeout_seconds: int` | Shows a colored rectangle for a duration. |
+| `create_countdown_window` | `message_text: str`, `countdown_seconds: int` | Starts a countdown timer. |
+| `create_elapsed_time_window` | `message_text: str` | Displays elapsed time since creation. |
+| `create_qrcode_window` | `data: str \| dict`, `duration: int`, `caption: str` | Renders a QR code overlay. |
+| `update_window_message` | `window_id: int`, `new_message: str` | Changes the text of a countdown or elapsed-time window. |
+| `close_window` | `window_id: int` | Closes any overlay window. |
+| `take_break` | `duration_seconds: int` | Discards incoming non-break commands for a break period. |
+| `cancel_break` | *(none)* | Cancels any active break. |
