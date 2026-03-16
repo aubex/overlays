@@ -27,7 +27,9 @@ class StubOverlayClient:
         self.calls.append(("update_window_message", window_id, new_message))
         return self.update_result
 
-    def create_countdown_window(self, message_text: str, countdown_seconds: int) -> bool:
+    def create_countdown_window(
+        self, message_text: str, countdown_seconds: int
+    ) -> bool:
         self.calls.append(("create_countdown_window", message_text, countdown_seconds))
         return True
 
@@ -54,7 +56,9 @@ class StubOverlayClient:
 
 def test_edge_cases_expect_invalid_window_operations_to_fail_gracefully(monkeypatch):
     fake_client = StubOverlayClient()
-    monkeypatch.setattr(stress_module, "get_overlay_client", lambda timeout: fake_client)
+    monkeypatch.setattr(
+        stress_module, "get_overlay_client", lambda timeout: fake_client
+    )
 
     stress_client = stress_module.StressTestClient()
     stress_client.test_edge_cases()
@@ -63,14 +67,14 @@ def test_edge_cases_expect_invalid_window_operations_to_fail_gracefully(monkeypa
     assert results["Close Invalid Window ID"].success is True
     assert results["Close Invalid Window ID"].additional_data["returned"] is False
     assert results["Update Invalid Window Message"].success is True
-    assert (
-        results["Update Invalid Window Message"].additional_data["returned"] is False
-    )
+    assert results["Update Invalid Window Message"].additional_data["returned"] is False
 
 
 def test_cleanup_keeps_tracked_windows_when_close_fails(monkeypatch):
     fake_client = StubOverlayClient()
-    monkeypatch.setattr(stress_module, "get_overlay_client", lambda timeout: fake_client)
+    monkeypatch.setattr(
+        stress_module, "get_overlay_client", lambda timeout: fake_client
+    )
     monkeypatch.setattr(stress_module.time, "sleep", lambda _: None)
 
     stress_client = stress_module.StressTestClient()
@@ -83,7 +87,9 @@ def test_cleanup_keeps_tracked_windows_when_close_fails(monkeypatch):
 
 def test_rapid_requests_fail_when_elapsed_follow_up_operations_fail(monkeypatch):
     fake_client = StubOverlayClient(close_result=True)
-    monkeypatch.setattr(stress_module, "get_overlay_client", lambda timeout: fake_client)
+    monkeypatch.setattr(
+        stress_module, "get_overlay_client", lambda timeout: fake_client
+    )
     monkeypatch.setattr(stress_module.time, "sleep", lambda _: None)
 
     def fake_choice(options):
@@ -109,7 +115,9 @@ def test_rapid_requests_fail_when_elapsed_follow_up_operations_fail(monkeypatch)
 
 def test_run_demo_uses_showcase_sequence(monkeypatch):
     fake_client = StubOverlayClient(close_result=True, update_result=True)
-    monkeypatch.setattr(stress_module, "get_overlay_client", lambda timeout: fake_client)
+    monkeypatch.setattr(
+        stress_module, "get_overlay_client", lambda timeout: fake_client
+    )
     monkeypatch.setattr(stress_module.time, "sleep", lambda _: None)
     monkeypatch.setattr(
         stress_module.StressTestClient,
@@ -134,5 +142,7 @@ def test_run_demo_uses_showcase_sequence(monkeypatch):
         "create_highlight_window",
         "create_highlight_window",
     ]
-    qr_call = next(call for call in fake_client.calls if call[0] == "create_qrcode_window")
+    qr_call = next(
+        call for call in fake_client.calls if call[0] == "create_qrcode_window"
+    )
     assert qr_call[1] == "https://example.com/demo"

@@ -19,10 +19,14 @@ class TestOverlayClient:
     def reset_module_state(self, monkeypatch):
         # Reset the module-level client singleton
         monkeypatch.setattr("overlays.client._overlay_client", None)
-        monkeypatch.setattr("overlays.client._server_unavailable_warning_emitted", False)
+        monkeypatch.setattr(
+            "overlays.client._server_unavailable_warning_emitted", False
+        )
         yield
         monkeypatch.setattr("overlays.client._overlay_client", None)
-        monkeypatch.setattr("overlays.client._server_unavailable_warning_emitted", False)
+        monkeypatch.setattr(
+            "overlays.client._server_unavailable_warning_emitted", False
+        )
 
     @pytest.fixture
     def unavailable_client(self, monkeypatch):

@@ -82,7 +82,9 @@ class OverlayClient:
         except pywintypes.error as e:
             self.server_available = False
             self.pipe_handle = None
-            logger.debug("Overlay server connection failed for pipe %s: %s", self.pipe_name, e)
+            logger.debug(
+                "Overlay server connection failed for pipe %s: %s", self.pipe_name, e
+            )
             _warn_server_unavailable_once(
                 "Overlay server not available on pipe %s; overlay commands will be ignored until it is running.",
                 self.pipe_name,
