@@ -128,3 +128,4 @@ Rust tests cover server behavior directly:
 | `update_window_message` | `window_id: int`, `new_message: str` | success message |
 | `take_break` | `duration_seconds: int` | success message |
 | `cancel_break` | *(none)* | success message |
+| `close_all` | *(none)* | success message |

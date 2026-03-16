@@ -8,20 +8,35 @@ This client is designed to stress test the server implementation by:
 - Testing edge cases and error conditions
 """
 
+import argparse
 import logging
 import random
 import statistics
 import time
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Callable, TypeVar
 
-from src.overlays.client import get_overlay_client, RemoteElapsedTimeWindow
+try:
+    from overlays.client import RemoteElapsedTimeWindow, get_overlay_client
+except ImportError:
+    from src.overlays.client import RemoteElapsedTimeWindow, get_overlay_client
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+try:
+    import win32api
+except ImportError:
+    win32api = None
+
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
+DEMO_REPO_URL = "https://github.com/aubex/overlays"
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    """Configure console logging for standalone execution."""
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
 # Fun randomization constants
 RANDOM_EMOJIS = [
@@ -91,6 +106,11 @@ WRAPPER_MESSAGES = [
     "⚡ Power lab",
     "💫 Wonder room",
 ]
+DEMO_ELAPSED_UPDATES = [
+    "Python drives the overlay state remotely",
+    "Messages update live without blocking your workflow",
+    "Clean enough for demos, streams, and handoffs",
+]
 
 
 # Color codes for console output
@@ -114,28 +134,28 @@ class TestResult:
     success: bool
     duration: float
     error_message: str = ""
-    additional_data: dict[str, Any] = None
-
-    def __post_init__(self):
-        if self.additional_data is None:
-            self.additional_data = {}
+    additional_data: dict[str, Any] = field(default_factory=dict)
 
 
 class StressTestClient:
     """Comprehensive stress testing client for the overlay server."""
 
-    def __init__(self, timeout: int = 5000):
+    def __init__(self, timeout: int = 5000, seed: int | None = None):
         """
         Initialize the stress test client.
 
         Args:
-            pipe_name: Named pipe to connect to
             timeout: Connection timeout in milliseconds
+            seed: Optional random seed for reproducible runs
         """
         self.timeout = timeout
+        self.seed = seed
         self.results: list[TestResult] = []
         self.active_windows: list[int] = []
         self.test_start_time = 0.0
+        if self.seed is not None:
+            random.seed(self.seed)
+            logger.info("Using random seed %s", self.seed)
         self.overlay_client = get_overlay_client(self.timeout)
 
     def log_result(self, result: TestResult) -> None:
@@ -147,11 +167,13 @@ class StressTestClient:
 
         if result.success:
             status = f"{Colors.OKGREEN}✅ PASS{Colors.ENDC}"
+            log_status = "PASS"
             print(
                 f"{random_emoji} {Colors.BOLD}{result.test_name}{Colors.ENDC} - {status} ({result.duration:.3f}s)"
             )
         else:
             status = f"{Colors.FAIL}❌ FAIL{Colors.ENDC}"
+            log_status = "FAIL"
             print(
                 f"{random_emoji} {Colors.BOLD}{result.test_name}{Colors.ENDC} - {status} ({result.duration:.3f}s)"
             )
@@ -160,29 +182,320 @@ class StressTestClient:
                     f"   {Colors.WARNING}⚠️  Error: {result.error_message}{Colors.ENDC}"
                 )
 
-        logger.info(f"{status} {result.test_name} ({result.duration:.3f}s)")
+        logger.info("%s %s (%.3fs)", log_status, result.test_name, result.duration)
         if not result.success and result.error_message:
-            logger.error(f"   Error: {result.error_message}")
+            logger.error("Error: %s", result.error_message)
 
-    def measure_time(self, func, *args, **kwargs) -> tuple[Any, float]:
+    def measure_time(self, func, *args, **kwargs) -> tuple[T, float]:
         """Measure execution time of a function."""
-        start_time = time.time()
+        start_time = time.perf_counter()
         try:
             result = func(*args, **kwargs)
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
             return result, duration
+        except Exception:
+            duration = time.perf_counter() - start_time
+            logger.debug(
+                "Operation %s failed after %.3fs",
+                getattr(func, "__name__", repr(func)),
+                duration,
+            )
+            raise
+
+    def _track_window(self, window_id: int | None) -> None:
+        """Track a created window so cleanup can retry if needed."""
+        if window_id is not None and window_id not in self.active_windows:
+            self.active_windows.append(window_id)
+
+    def _mark_window_closed(self, window_id: int) -> None:
+        """Forget a window once it has been closed successfully."""
+        if window_id in self.active_windows:
+            self.active_windows.remove(window_id)
+
+    def _close_tracked_window(self, window_id: int) -> bool:
+        """Close a window and only forget it if the close succeeded."""
+        closed = self.overlay_client.close_window(window_id)
+        if closed:
+            self._mark_window_closed(window_id)
+        return closed
+
+    def _run_rapid_request(self, request_index: int) -> tuple[bool, str | None]:
+        """Execute one rapid request and report whether the full request succeeded."""
+        request_type = random.choice(["countdown", "highlight", "elapsed"])
+
+        if request_type == "countdown":
+            rapid_msg = random.choice(RAPID_MESSAGES)
+            duration = random.uniform(0.5, 2.0)
+            succeeded = self.overlay_client.create_countdown_window(
+                f"{rapid_msg} #{request_index}", int(duration)
+            )
+            return succeeded, None if succeeded else "countdown creation failed"
+
+        if request_type == "highlight":
+            x = random.randint(100, 800)
+            y = random.randint(100, 400)
+            width = random.randint(50, 200)
+            height = random.randint(30, 100)
+            rect = (x, y, x + width, y + height)
+            duration = random.uniform(0.5, 2.0)
+            succeeded = self.overlay_client.create_highlight_window(rect, int(duration))
+            return succeeded, None if succeeded else "highlight creation failed"
+
+        rapid_msg = random.choice(RAPID_MESSAGES)
+        window_id = self.overlay_client.create_elapsed_time_window(
+            f"{rapid_msg} #{request_index}"
+        )
+        if window_id is None:
+            return False, "elapsed window creation failed"
+
+        self._track_window(window_id)
+
+        if random.choice([True, False]):
+            update_msg = random.choice(RAPID_MESSAGES)
+            updated = self.overlay_client.update_window_message(
+                window_id, f"{update_msg} - Updated!"
+            )
+            if not updated:
+                closed = self._close_tracked_window(window_id)
+                if not closed:
+                    return False, "elapsed update failed and cleanup close failed"
+                return False, "elapsed update failed"
+
+        closed = self._close_tracked_window(window_id)
+        if not closed:
+            return False, "elapsed close failed"
+
+        return True, None
+
+    def _print_scene_banner(
+        self, title: str, subtitle: str, color: str = Colors.OKCYAN
+    ) -> None:
+        """Print a clean banner for showcase scenes."""
+        print(f"\n{color}{Colors.BOLD}{title}{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}{subtitle}{Colors.ENDC}")
+
+    def _get_screen_size(self) -> tuple[int, int]:
+        """Return the primary screen dimensions, with a conservative fallback."""
+        if win32api is not None:
+            try:
+                width = win32api.GetSystemMetrics(0)
+                height = win32api.GetSystemMetrics(1)
+                if width > 0 and height > 0:
+                    return width, height
+            except Exception as e:
+                logger.debug("Falling back from win32api screen metrics: %s", e)
+
+        try:
+            import ctypes
+
+            width = ctypes.windll.user32.GetSystemMetrics(0)
+            height = ctypes.windll.user32.GetSystemMetrics(1)
+            if width > 0 and height > 0:
+                return width, height
         except Exception as e:
-            duration = time.time() - start_time
-            raise e
+            logger.debug("Falling back to default screen metrics: %s", e)
+
+        return 1920, 1080
+
+    def _demo_highlight_rectangles(self) -> list[tuple[int, int, int, int]]:
+        """Build a few visually balanced highlight regions for the showcase."""
+        screen_width, screen_height = self._get_screen_size()
+        margin_x = max(48, screen_width // 24)
+        margin_y = max(48, screen_height // 18)
+        center_width = max(280, screen_width // 3)
+        center_height = max(180, screen_height // 4)
+
+        return [
+            (
+                margin_x,
+                margin_y,
+                margin_x + max(240, screen_width // 4),
+                margin_y + max(140, screen_height // 5),
+            ),
+            (
+                (screen_width - center_width) // 2,
+                (screen_height - center_height) // 2,
+                (screen_width + center_width) // 2,
+                (screen_height + center_height) // 2,
+            ),
+            (
+                screen_width - max(240, screen_width // 4) - margin_x,
+                screen_height - max(180, screen_height // 4) - margin_y,
+                screen_width - margin_x,
+                screen_height - margin_y,
+            ),
+        ]
+
+    def _run_demo_scene(self, scene_name: str, scene: Callable[[], None]) -> bool:
+        """Run one showcase scene and record a single high-level result."""
+        try:
+            _, duration = self.measure_time(scene)
+            self.log_result(TestResult(scene_name, True, duration))
+            return True
+        except Exception as e:
+            self.log_result(TestResult(scene_name, False, 0.0, str(e)))
+            return False
+
+    def _demo_highlights_scene(self) -> None:
+        """Show crisp highlight overlays in deliberate positions."""
+        self._print_scene_banner(
+            "Highlight Any Screen Region",
+            "Guide attention instantly with clean click-through outlines.",
+            Colors.OKCYAN,
+        )
+        for index, rect in enumerate(self._demo_highlight_rectangles(), start=1):
+            created = self.overlay_client.create_highlight_window(rect, 2)
+            if not created:
+                raise RuntimeError(f"Failed to create highlight overlay {index}")
+            time.sleep(0.55)
+        time.sleep(1.1)
+
+    def _demo_countdown_scene(self) -> None:
+        """Show a countdown overlay with enough time to read it in a GIF."""
+        self._print_scene_banner(
+            "Start a Countdown Instantly",
+            "Useful for demos, presentations, and focused handoffs.",
+            Colors.WARNING,
+        )
+        created = self.overlay_client.create_countdown_window("Launch sequence", 3)
+        if not created:
+            raise RuntimeError("Failed to create countdown overlay")
+        time.sleep(3.4)
+
+    def _demo_elapsed_scene(self) -> None:
+        """Show a live timer with a few clear message updates."""
+        self._print_scene_banner(
+            "Update a Live Timer Remotely",
+            "Drive overlay state from Python while work continues.",
+            Colors.OKBLUE,
+        )
+        window_id = self.overlay_client.create_elapsed_time_window(
+            "Overlay demo running..."
+        )
+        if window_id is None:
+            raise RuntimeError("Failed to create elapsed-time overlay")
+
+        self._track_window(window_id)
+        time.sleep(0.7)
+
+        for update in DEMO_ELAPSED_UPDATES:
+            updated = self.overlay_client.update_window_message(window_id, update)
+            if not updated:
+                raise RuntimeError("Failed to update elapsed-time overlay")
+            time.sleep(0.85)
+
+        closed = self._close_tracked_window(window_id)
+        if not closed:
+            raise RuntimeError("Failed to close elapsed-time overlay")
+
+    def _demo_qrcode_scene(self, repo_url: str) -> None:
+        """Show a QR code that points viewers to the repository."""
+        self._print_scene_banner(
+            "Share a Link Instantly",
+            "Turn any URL into a scannable QR overlay.",
+            Colors.OKGREEN,
+        )
+        caption = repo_url.removeprefix("https://").removeprefix("http://")
+        window_id = self.overlay_client.create_qrcode_window(
+            repo_url,
+            duration=10,
+            caption=caption,
+        )
+        if window_id is None:
+            raise RuntimeError("Failed to create QR code overlay")
+
+        self._track_window(window_id)
+        time.sleep(2.6)
+
+        closed = self._close_tracked_window(window_id)
+        if not closed:
+            raise RuntimeError("Failed to close QR code overlay")
+
+    def _demo_finale_scene(self) -> None:
+        """End with a layered scene that shows multiple overlay types together."""
+        self._print_scene_banner(
+            "Combine Overlay Types",
+            "Countdowns, highlights, timers, and QR codes can share the screen.",
+            Colors.HEADER,
+        )
+        hero_rect = self._demo_highlight_rectangles()[1]
+        highlighted = self.overlay_client.create_highlight_window(hero_rect, 3)
+        if not highlighted:
+            raise RuntimeError("Failed to create finale highlight")
+
+        window_id = self.overlay_client.create_elapsed_time_window(
+            "Remote overlays in real time"
+        )
+        if window_id is None:
+            raise RuntimeError("Failed to create finale status window")
+
+        self._track_window(window_id)
+        time.sleep(0.45)
+
+        countdown_started = self.overlay_client.create_countdown_window("Wrap-up in", 3)
+        if not countdown_started:
+            raise RuntimeError("Failed to create finale countdown")
+
+        time.sleep(0.85)
+        updated = self.overlay_client.update_window_message(
+            window_id,
+            "Highlights, countdowns, timers, and QR codes",
+        )
+        if not updated:
+            raise RuntimeError("Failed to update finale status window")
+
+        time.sleep(1.4)
+        closed = self._close_tracked_window(window_id)
+        if not closed:
+            raise RuntimeError("Failed to close finale status window")
+
+        time.sleep(0.8)
+
+    def run_demo(self, repo_url: str = DEMO_REPO_URL) -> None:
+        """Run a short, deterministic showcase intended for screencasts."""
+        self.test_start_time = time.perf_counter()
+        initial_result_count = len(self.results)
+
+        print("🎬 Starting overlay showcase")
+        print("=" * 60)
+
+        if not self.overlay_client.is_available():
+            self.log_result(
+                TestResult("Showcase Setup", False, 0.0, "Server not available")
+            )
+            return
+
+        scene_plan = [
+            ("✨ Spotlight Regions", self._demo_highlights_scene),
+            ("⏰ Countdown Overlay", self._demo_countdown_scene),
+            ("🔄 Live Timer Updates", self._demo_elapsed_scene),
+            ("🔗 QR Code Share", lambda: self._demo_qrcode_scene(repo_url)),
+            ("🎬 Overlay Finale", self._demo_finale_scene),
+        ]
+
+        try:
+            for scene_name, scene in scene_plan:
+                if not self._run_demo_scene(scene_name, scene):
+                    break
+        except KeyboardInterrupt:
+            logger.warning("Showcase interrupted by user")
+        finally:
+            self.cleanup_remaining_windows()
+
+        scene_results = self.results[initial_result_count:]
+        passed_scenes = sum(1 for result in scene_results if result.success)
+        print("\n🎥 Showcase complete")
+        print(f"Scenes completed: {passed_scenes}/{len(scene_results)}")
+        print(f"Runtime: {time.perf_counter() - self.test_start_time:.2f}s")
 
     def test_basic_connectivity(self) -> None:
         """Test basic connection to the overlay server."""
         logger.info("🔌 Testing basic connectivity...")
 
         try:
-            start_time = time.time()
+            start_time = time.perf_counter()
             is_available = self.overlay_client.is_available()
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
 
             self.log_result(
                 TestResult(
@@ -297,7 +610,7 @@ class StressTestClient:
                     TestResult(f"Highlight Window {i + 1}", False, 0.0, str(e))
                 )
 
-    def test_qrcode_window(self, duration=1) -> None:
+    def test_qrcode_window(self, duration: int = 1) -> None:
         """Test creating qr code window."""
 
         if not self.overlay_client.is_available():
@@ -322,13 +635,10 @@ class StressTestClient:
                     "⏱️ Create QR code window",
                     success,
                     actual_duration,
-                    "" if success else "Failed to create elapsed time window",
+                    "" if success else "Failed to create QR code window",
                     {"window_id": window_id},
                 )
             )
-
-            if window_id:
-                self.active_windows.append(window_id)
 
             # Random delay for visual effect
             time.sleep(random.uniform(0.08, 0.15))
@@ -375,7 +685,7 @@ class StressTestClient:
 
                 if window_id:
                     created_windows.append(window_id)
-                    self.active_windows.append(window_id)
+                self._track_window(window_id)
 
                 # Random delay for visual effect
                 time.sleep(random.uniform(0.08, 0.15))
@@ -424,7 +734,7 @@ class StressTestClient:
                 time.sleep(random.uniform(0.1, 0.3))
 
                 result, duration = self.measure_time(
-                    self.overlay_client.close_window, window_id
+                    self._close_tracked_window, window_id
                 )
 
                 self.log_result(
@@ -435,14 +745,10 @@ class StressTestClient:
                         "" if result else "Failed to close window",
                     )
                 )
-
-                if window_id in self.active_windows:
-                    self.active_windows.remove(window_id)
-
             except Exception as e:
                 self.log_result(TestResult(f"Close Window {i + 1}", False, 0.0, str(e)))
 
-    def test_break_functionality(self) -> None:
+    def test_break_functionality(self, break_duration: int = 5) -> None:
         """Test break behavior, including command discard and recovery."""
         logger.info("☕ Testing break functionality...")
 
@@ -456,7 +762,7 @@ class StressTestClient:
         try:
             result, duration = self.measure_time(
                 self.overlay_client.take_break,
-                5,  # 5 second break
+                break_duration,
             )
 
             self.log_result(
@@ -501,7 +807,8 @@ class StressTestClient:
             if discard_response.get("status") == "success":
                 leaked_window_id = discard_response.get("window_id")
                 if leaked_window_id:
-                    self.overlay_client.close_window(leaked_window_id)
+                    self._track_window(leaked_window_id)
+                    self._close_tracked_window(leaked_window_id)
 
             result, duration = self.measure_time(self.overlay_client.cancel_break)
 
@@ -534,7 +841,7 @@ class StressTestClient:
             )
 
             if window_id:
-                self.active_windows.append(window_id)
+                self._track_window(window_id)
 
         except Exception as e:
             self.log_result(TestResult("Break Functionality", False, 0.0, str(e)))
@@ -552,70 +859,59 @@ class StressTestClient:
             )
             return
 
-        start_time = time.time()
+        if request_count <= 0:
+            self.log_result(
+                TestResult(
+                    "Rapid Requests",
+                    False,
+                    0.0,
+                    "request_count must be greater than zero",
+                )
+            )
+            return
+
+        start_time = time.perf_counter()
         successful_requests = 0
+        failure_samples: list[str] = []
 
         for i in range(request_count):
             try:
-                # Randomly choose request type and use random messages
-                request_type = random.choice(["countdown", "highlight", "elapsed"])
-
-                if request_type == "countdown":
-                    rapid_msg = random.choice(RAPID_MESSAGES)
-                    duration = random.uniform(0.5, 2.0)
-                    result = self.overlay_client.create_countdown_window(
-                        f"{rapid_msg} #{i}", int(duration)
-                    )
-                elif request_type == "highlight":
-                    # Random position and size
-                    x = random.randint(100, 800)
-                    y = random.randint(100, 400)
-                    w = random.randint(50, 200)
-                    h = random.randint(30, 100)
-                    rect = (x, y, x + w, y + h)
-                    duration = random.uniform(0.5, 2.0)
-                    result = self.overlay_client.create_highlight_window(
-                        rect, int(duration)
-                    )
-                else:  # elapsed
-                    rapid_msg = random.choice(RAPID_MESSAGES)
-                    window_id = self.overlay_client.create_elapsed_time_window(
-                        f"{rapid_msg} #{i}"
-                    )
-                    result = window_id is not None
-                    if window_id:
-                        # Random quick update before closing
-                        if random.choice([True, False]):
-                            update_msg = random.choice(RAPID_MESSAGES)
-                            self.overlay_client.update_window_message(
-                                window_id, f"{update_msg} - Updated!"
-                            )
-                        self.overlay_client.close_window(window_id)
-
+                result, failure_reason = self._run_rapid_request(i)
                 if result:
                     successful_requests += 1
+                elif failure_reason and len(failure_samples) < 3:
+                    failure_samples.append(failure_reason)
 
                 # Random micro-delay for chaos
                 if random.choice([True, False]):
                     time.sleep(random.uniform(0.001, 0.01))
 
             except Exception as e:
-                logger.error(f"Rapid request {i} failed: {e}")
+                logger.error("Rapid request %s failed: %s", i, e)
+                if len(failure_samples) < 3:
+                    failure_samples.append(str(e))
 
-        total_duration = time.time() - start_time
+        total_duration = time.perf_counter() - start_time
         success_rate = successful_requests / request_count
+        requests_per_second = (
+            request_count / total_duration if total_duration > 0 else float("inf")
+        )
+        message = f"Success rate: {success_rate:.2%} ({successful_requests}/{request_count})"
+        if failure_samples:
+            message = f"{message}; sample failures: {', '.join(failure_samples)}"
 
         self.log_result(
             TestResult(
                 "⚡ Rapid Chaos Test",
                 success_rate > 0.8,  # Consider successful if >80% succeed
                 total_duration,
-                f"Success rate: {success_rate:.2%} ({successful_requests}/{request_count})",
+                message,
                 {
                     "total_requests": request_count,
                     "successful_requests": successful_requests,
                     "success_rate": success_rate,
-                    "requests_per_second": request_count / total_duration,
+                    "requests_per_second": requests_per_second,
+                    "failure_samples": failure_samples,
                 },
             )
         )
@@ -640,9 +936,12 @@ class StressTestClient:
             self.log_result(
                 TestResult(
                     "Close Invalid Window ID",
-                    True,  # Should handle gracefully
+                    result is False,
                     duration,
-                    "Should handle invalid window ID gracefully",
+                    ""
+                    if result is False
+                    else "Unexpectedly closed a non-existent window",
+                    {"returned": result},
                 )
             )
         except Exception as e:
@@ -659,9 +958,12 @@ class StressTestClient:
             self.log_result(
                 TestResult(
                     "Update Invalid Window Message",
-                    True,  # Should handle gracefully
+                    result is False,
                     duration,
-                    "Should handle invalid window ID gracefully",
+                    ""
+                    if result is False
+                    else "Unexpectedly updated a non-existent window",
+                    {"returned": result},
                 )
             )
         except Exception as e:
@@ -702,6 +1004,7 @@ class StressTestClient:
             return
 
         try:
+            wrapper_start_time = time.perf_counter()
             # Create window using the wrapper with random message
             wrapper_msg = random.choice(WRAPPER_MESSAGES)
             window_id = self.overlay_client.create_elapsed_time_window(
@@ -709,57 +1012,67 @@ class StressTestClient:
             )
 
             if window_id:
-                with RemoteElapsedTimeWindow(
-                    window_id, self.overlay_client
-                ) as remote_window:
-                    # Test updating message with random content
-                    start_time = time.time()
-                    initial_update = random.choice(WRAPPER_MESSAGES)
-                    result = remote_window.update_message(
-                        f"{initial_update} - Wrapper Active!"
+                self._track_window(window_id)
+                remote_window = RemoteElapsedTimeWindow(window_id, self.overlay_client)
+
+                # Test updating message with random content
+                start_time = time.perf_counter()
+                initial_update = random.choice(WRAPPER_MESSAGES)
+                result = remote_window.update_message(
+                    f"{initial_update} - Wrapper Active!"
+                )
+                duration = time.perf_counter() - start_time
+
+                self.log_result(
+                    TestResult(
+                        "🎭 Remote Window Update",
+                        result,
+                        duration,
+                        "" if result else "Failed to update via wrapper",
                     )
-                    duration = time.time() - start_time
+                )
+
+                # Test multiple random updates with varying delays
+                update_count = random.randint(3, 6)
+                for i in range(update_count):
+                    random_delay = random.uniform(0.05, 0.2)
+                    time.sleep(random_delay)
+
+                    random_wrapper_msg = random.choice(WRAPPER_MESSAGES)
+                    random_emoji_msg = random.choice(RANDOM_EMOJIS)
+                    update_result = remote_window.update_message(
+                        f"{random_wrapper_msg} {random_emoji_msg} - Update #{i + 1}"
+                    )
 
                     self.log_result(
                         TestResult(
-                            "🎭 Remote Window Update",
-                            result,
-                            duration,
-                            "" if result else "Failed to update via wrapper",
+                            f"🔄 Wrapper Update {i + 1}",
+                            update_result,
+                            random_delay,
+                            ""
+                            if update_result
+                            else f"Failed wrapper update {i + 1}",
                         )
                     )
 
-                    # Test multiple random updates with varying delays
-                    update_count = random.randint(3, 6)
-                    for i in range(update_count):
-                        random_delay = random.uniform(0.05, 0.2)
-                        time.sleep(random_delay)
+                closed, close_duration = self.measure_time(remote_window.close)
+                self.log_result(
+                    TestResult(
+                        "🗑️ Remote Window Close",
+                        closed,
+                        close_duration,
+                        "" if closed else "Failed to close remote window",
+                    )
+                )
 
-                        random_wrapper_msg = random.choice(WRAPPER_MESSAGES)
-                        random_emoji_msg = random.choice(RANDOM_EMOJIS)
-                        update_result = remote_window.update_message(
-                            f"{random_wrapper_msg} {random_emoji_msg} - Update #{i + 1}"
-                        )
-
-                        self.log_result(
-                            TestResult(
-                                f"🔄 Wrapper Update {i + 1}",
-                                update_result,
-                                random_delay,
-                                ""
-                                if update_result
-                                else f"Failed wrapper update {i + 1}",
-                            )
-                        )
-
-                    # Window will be automatically closed when exiting context
+                if closed:
+                    self._mark_window_closed(window_id)
 
                 self.log_result(
                     TestResult(
                         "🎪 Remote Window Wrapper Complete",
                         True,
-                        time.time() - start_time,
-                        "Successfully used wrapper class with random magic!",
+                        time.perf_counter() - wrapper_start_time,
                     )
                 )
             else:
@@ -780,18 +1093,34 @@ class StressTestClient:
         if not self.active_windows:
             return
 
-        logger.info(f"🧹 Cleaning up {len(self.active_windows)} remaining windows...")
+        logger.info("🧹 Cleaning up %s remaining windows...", len(self.active_windows))
 
-        if self.overlay_client.is_available():
-            for window_id in self.active_windows[
-                :
-            ]:  # Copy list to avoid modification during iteration
-                try:
-                    self.overlay_client.close_window(window_id)
-                    self.active_windows.remove(window_id)
-                    time.sleep(0.1)
-                except Exception as e:
-                    logger.error(f"Failed to close window {window_id}: {e}")
+        if not self.overlay_client.is_available():
+            logger.warning(
+                "Overlay server unavailable during cleanup; %s window(s) remain tracked: %s",
+                len(self.active_windows),
+                self.active_windows,
+            )
+            return
+
+        for window_id in self.active_windows[:]:
+            try:
+                closed = self._close_tracked_window(window_id)
+                if not closed:
+                    logger.warning(
+                        "Window %s remained tracked because close_window() returned False",
+                        window_id,
+                    )
+                time.sleep(0.1)
+            except Exception as e:
+                logger.error("Failed to close window %s: %s", window_id, e)
+
+        if self.active_windows:
+            logger.warning(
+                "Cleanup finished with %s tracked window(s) still open: %s",
+                len(self.active_windows),
+                self.active_windows,
+            )
 
     def generate_report(self) -> None:
         """Generate and display a comprehensive test report."""
@@ -805,7 +1134,7 @@ class StressTestClient:
 
         durations = [r.duration for r in self.results if r.duration > 0]
         avg_duration = statistics.mean(durations) if durations else 0
-        total_duration = time.time() - self.test_start_time
+        total_duration = time.perf_counter() - self.test_start_time
 
         print("\n" + "=" * 80)
         print("🧪 STRESS TEST REPORT")
@@ -819,6 +1148,10 @@ class StressTestClient:
         if durations:
             print(f"⚡ Fastest Test: {min(durations):.3f}s")
             print(f"🐌 Slowest Test: {max(durations):.3f}s")
+
+        if self.active_windows:
+            print(f"⚠️ Remaining tracked windows: {len(self.active_windows)}")
+            print(f"   IDs: {', '.join(str(window_id) for window_id in self.active_windows)}")
 
         # Show failed tests
         failed_results = [r for r in self.results if not r.success]
@@ -848,9 +1181,17 @@ class StressTestClient:
 
         print("=" * 80)
 
-    def run_all_tests(self) -> None:
+    def run_all_tests(
+        self,
+        countdown_count: int = 5,
+        highlight_count: int = 5,
+        elapsed_count: int = 3,
+        qr_duration: int = 1,
+        break_duration: int = 5,
+        rapid_request_count: int = 20,
+    ) -> None:
         """Run the complete stress test suite."""
-        self.test_start_time = time.time()
+        self.test_start_time = time.perf_counter()
 
         print("🚀 Starting overlay server stress test suite")
         print("=" * 60)
@@ -858,15 +1199,15 @@ class StressTestClient:
         try:
             # Basic functionality tests
             self.test_basic_connectivity()
-            self.test_countdown_windows(5)
-            self.test_qrcode_window()
-            self.test_highlight_windows(5)
-            self.test_elapsed_time_windows(3)
-            self.test_break_functionality()
+            self.test_countdown_windows(countdown_count)
+            self.test_qrcode_window(qr_duration)
+            self.test_highlight_windows(highlight_count)
+            self.test_elapsed_time_windows(elapsed_count)
+            self.test_break_functionality(break_duration)
             self.test_remote_elapsed_time_window()
 
             # Stress tests
-            self.test_rapid_requests(20)
+            self.test_rapid_requests(rapid_request_count)
 
             # Edge case tests
             self.test_edge_cases()
@@ -883,25 +1224,87 @@ class StressTestClient:
             self.generate_report()
 
 
-def main():
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser for the stress test client."""
+    parser = argparse.ArgumentParser(
+        description="Stress test or showcase the overlays server."
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Run a short scripted showcase instead of the full stress suite.",
+    )
+    parser.add_argument(
+        "--demo-url",
+        default=DEMO_REPO_URL,
+        help="URL to encode in the showcase QR scene.",
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Run immediately without an interactive confirmation prompt.",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=5000,
+        help="Named-pipe connection timeout in milliseconds.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        help="Random seed for reproducible request/message selection.",
+    )
+    parser.add_argument(
+        "--rapid-request-count",
+        type=int,
+        default=20,
+        help="Number of rapid requests to issue during the rapid test.",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
     """Main entry point for the stress test client."""
-    print("🧪 Overlay Server Stress Test Client")
-    print("=" * 50)
-    print("This will stress test the Rust overlay server.")
+    args = build_parser().parse_args(argv)
+    configure_logging(logging.WARNING if args.demo else logging.INFO)
+
+    if args.demo:
+        print("🎬 Overlay Showcase Demo")
+        print("=" * 50)
+        print("A short scripted showcase for screencasts and README gifs.")
+    else:
+        print("🧪 Overlay Server Stress Test Client")
+        print("=" * 50)
+        print("This will stress test the Rust overlay server.")
     print("Make sure the overlay server is running.")
+    if not args.demo and args.seed is not None:
+        print(f"Using random seed: {args.seed}")
+    print("=" * 50)
     print()
 
-    response = (
-        input("Press Enter to start the stress test (or 'q' to quit): ").strip().lower()
-    )
-    if response == "q":
-        print("Test cancelled.")
-        return
+    if not args.yes:
+        prompt = (
+            "Press Enter to start the showcase (or 'q' to quit): "
+            if args.demo
+            else "Press Enter to start the stress test (or 'q' to quit): "
+        )
+        response = input(prompt).strip().lower()
+        if response == "q":
+            print("Test cancelled.")
+            return 0
 
     # Create and run stress test
-    stress_tester = StressTestClient()
-    stress_tester.run_all_tests()
+    stress_tester = StressTestClient(
+        timeout=args.timeout,
+        seed=None if args.demo else args.seed,
+    )
+    if args.demo:
+        stress_tester.run_demo(repo_url=args.demo_url)
+    else:
+        stress_tester.run_all_tests(rapid_request_count=args.rapid_request_count)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

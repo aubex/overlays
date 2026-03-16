@@ -11,6 +11,24 @@ import win32pipe
 
 logger = logging.getLogger(__name__)
 
+_server_unavailable_warning_emitted = False
+
+
+def _warn_server_unavailable_once(message: str, *args: Any) -> None:
+    """Log a warning once per outage so missing-server issues stay visible without spamming."""
+    global _server_unavailable_warning_emitted  # noqa: PLW0603
+    if _server_unavailable_warning_emitted:
+        logger.debug(message, *args)
+        return
+
+    logger.warning(message, *args)
+    _server_unavailable_warning_emitted = True
+
+
+def _reset_server_unavailable_warning() -> None:
+    global _server_unavailable_warning_emitted  # noqa: PLW0603
+    _server_unavailable_warning_emitted = False
+
 
 class OverlayClient:
     """
@@ -36,7 +54,7 @@ class OverlayClient:
         self._connect()
 
     def _connect(self) -> None:
-        """Connect to the named pipe server. Fails silently if server unavailable."""
+        """Connect to the named pipe server."""
         try:
             # Wait for pipe to become available
             win32pipe.WaitNamedPipe(self.pipe_name, self.timeout)
@@ -58,13 +76,17 @@ class OverlayClient:
             )
 
             self.server_available = True
+            _reset_server_unavailable_warning()
             logger.info("Connected to overlay server pipe")
 
         except pywintypes.error as e:
             self.server_available = False
             self.pipe_handle = None
-            msg = f"Overlay manager not available: {e}"
-            logger.debug(msg)
+            logger.debug("Overlay server connection failed for pipe %s: %s", self.pipe_name, e)
+            _warn_server_unavailable_once(
+                "Overlay server not available on pipe %s; overlay commands will be ignored until it is running.",
+                self.pipe_name,
+            )
 
     def _send_command(
         self, command: str, args: dict[str, Any] | None = None
@@ -82,8 +104,11 @@ class OverlayClient:
 
         """
         if not self.server_available or not self.pipe_handle:
-            msg = f"Ignoring command '{command}' - overlay server not available"
-            logger.debug(msg)
+            _warn_server_unavailable_once(
+                "Ignoring overlay command '%s' because the server is not available on pipe %s.",
+                command,
+                self.pipe_name,
+            )
             return {"status": "ignored", "reason": "server_unavailable"}
 
         # Prepare command data
@@ -100,11 +125,11 @@ class OverlayClient:
                 return json.loads(data.decode("utf-8"))
 
             # Connection lost
-            self._handle_connection_lost()
+            self._handle_connection_lost(command)
 
         except pywintypes.error as e:
             if e.winerror in [109, 232]:  # Broken pipe or no data
-                self._handle_connection_lost()
+                self._handle_connection_lost(command)
                 return {"status": "ignored", "reason": "connection_lost"}
             msg = f"Error sending command '{command}': {e}"
             logger.debug(msg)
@@ -118,9 +143,19 @@ class OverlayClient:
         else:
             return {"status": "ignored", "reason": "connection_lost"}
 
-    def _handle_connection_lost(self) -> None:
+    def _handle_connection_lost(self, command: str | None = None) -> None:
         """Handle lost connection by marking server as unavailable."""
-        logger.debug("Connection to overlay server lost")
+        if command is None:
+            _warn_server_unavailable_once(
+                "Connection to overlay server on pipe %s was lost; future overlay commands will be ignored until it is running again.",
+                self.pipe_name,
+            )
+        else:
+            _warn_server_unavailable_once(
+                "Connection to overlay server on pipe %s was lost while handling '%s'; future overlay commands will be ignored until it is running again.",
+                self.pipe_name,
+                command,
+            )
         self.server_available = False
         self.pipe_handle = None
 
@@ -261,6 +296,17 @@ class OverlayClient:
 
         """
         response = self._send_command("cancel_break")
+        return response.get("status") == "success"
+
+    def close_all_windows(self) -> bool:
+        """
+        Close all active overlay windows.
+
+        Returns:
+            bool: True if successful, False if server unavailable
+
+        """
+        response = self._send_command("close_all")
         return response.get("status") == "success"
 
     def is_available(self) -> bool:

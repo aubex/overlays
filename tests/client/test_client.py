@@ -1,3 +1,4 @@
+import logging
 from unittest.mock import Mock
 
 import overlays.client as client_module
@@ -18,8 +19,10 @@ class TestOverlayClient:
     def reset_module_state(self, monkeypatch):
         # Reset the module-level client singleton
         monkeypatch.setattr("overlays.client._overlay_client", None)
+        monkeypatch.setattr("overlays.client._server_unavailable_warning_emitted", False)
         yield
         monkeypatch.setattr("overlays.client._overlay_client", None)
+        monkeypatch.setattr("overlays.client._server_unavailable_warning_emitted", False)
 
     @pytest.fixture
     def unavailable_client(self, monkeypatch):
@@ -61,6 +64,37 @@ class TestOverlayClient:
         resp = unavailable_client._send_command("cmd", {"x": 1})
         assert resp == {"status": "ignored", "reason": "server_unavailable"}
 
+    def test_connect_logs_warning_when_server_unavailable(self, monkeypatch, caplog):
+        def fake_wait(pipe_name, timeout):
+            raise pywintypes.error(2, "WaitNamedPipe", "missing")
+
+        monkeypatch.setattr(client_module.win32pipe, "WaitNamedPipe", fake_wait)
+
+        with caplog.at_level(logging.WARNING):
+            client = OverlayClient()
+
+        assert client.is_available() is False
+        warnings = [record.message for record in caplog.records]
+        assert warnings == [
+            "Overlay server not available on pipe \\\\.\\pipe\\overlay_manager; "
+            "overlay commands will be ignored until it is running."
+        ]
+
+    def test_send_command_logs_warning_only_once_when_unavailable(
+        self, unavailable_client, caplog
+    ):
+        with caplog.at_level(logging.WARNING):
+            first = unavailable_client._send_command("first", {"x": 1})
+            second = unavailable_client._send_command("second", {"x": 2})
+
+        assert first == {"status": "ignored", "reason": "server_unavailable"}
+        assert second == {"status": "ignored", "reason": "server_unavailable"}
+        warnings = [record.message for record in caplog.records]
+        assert warnings == [
+            "Ignoring overlay command 'first' because the server is not available "
+            "on pipe \\\\.\\pipe\\overlay_manager."
+        ]
+
     def test_send_command_success(self, available_client, monkeypatch):
         # Mock WriteFile and ReadFile
         monkeypatch.setattr(win32file, "WriteFile", lambda h, msg: None)
@@ -82,6 +116,24 @@ class TestOverlayClient:
         assert resp == {"status": "ignored", "reason": "connection_lost"}
         assert not available_client.server_available
         assert available_client.pipe_handle is None
+
+    def test_send_command_broken_pipe_logs_warning(
+        self, available_client, monkeypatch, caplog
+    ):
+        def fake_write(h, msg):
+            raise pywintypes.error(109, "WriteFile", "Broken")
+
+        monkeypatch.setattr(win32file, "WriteFile", fake_write)
+
+        with caplog.at_level(logging.WARNING):
+            available_client._send_command("cmd", {})
+
+        warnings = [record.message for record in caplog.records]
+        assert warnings == [
+            "Connection to overlay server on pipe \\\\.\\pipe\\overlay_manager was "
+            "lost while handling 'cmd'; future overlay commands will be ignored "
+            "until it is running again."
+        ]
 
     def test_send_command_invalid_json_response(self, available_client, monkeypatch):
         monkeypatch.setattr(win32file, "WriteFile", lambda h, m: None)
@@ -106,6 +158,7 @@ class TestOverlayClient:
             ("update_window_message", (9, "new"), True, {"status": "success"}),
             ("take_break", (12,), True, {"status": "success"}),
             ("cancel_break", (), True, {"status": "success"}),
+            ("close_all_windows", (), True, {"status": "success"}),
             # failure cases
             ("create_countdown_window", ("m", 1), False, {"status": "error"}),
         ],
