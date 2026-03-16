@@ -148,3 +148,39 @@ def test_rust_server_supports_breaks_and_parallel_clients(monkeypatch):
 
         client_one.disconnect()
         client_two.disconnect()
+
+
+def test_rust_server_close_all_clears_windows(monkeypatch):
+    pipe_name = f"overlay_manager_pytest_{uuid.uuid4().hex}"
+    with running_server(pipe_name):
+        monkeypatch.setenv("OVERLAY_PIPE_NAME", pipe_name)
+        client = OverlayClient(timeout=2000)
+        assert client.is_available()
+
+        created_cd = client._send_command(
+            "create_countdown",
+            {"message_text": "cd", "countdown_seconds": 30},
+        )
+        assert created_cd["status"] == "success"
+
+        created_et = client._send_command(
+            "create_elapsed_time",
+            {"message_text": "et"},
+        )
+        assert created_et["status"] == "success"
+
+        closed_all = client._send_command("close_all")
+        assert closed_all == {"status": "success", "message": "Closed 2 windows"}
+
+        # Verify both windows are gone
+        close_first = client._send_command(
+            "close_window", {"window_id": created_cd["window_id"]}
+        )
+        assert close_first["status"] == "error"
+
+        close_second = client._send_command(
+            "close_window", {"window_id": created_et["window_id"]}
+        )
+        assert close_second["status"] == "error"
+
+        client.disconnect()

@@ -298,6 +298,17 @@ class OverlayClient:
         response = self._send_command("cancel_break")
         return response.get("status") == "success"
 
+    def close_all_windows(self) -> bool:
+        """
+        Close all active overlay windows.
+
+        Returns:
+            bool: True if successful, False if server unavailable
+
+        """
+        response = self._send_command("close_all")
+        return response.get("status") == "success"
+
     def is_available(self) -> bool:
         """
         Check if the overlay server is available.

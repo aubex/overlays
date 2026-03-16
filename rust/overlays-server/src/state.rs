@@ -167,6 +167,17 @@ impl OverlayState {
                 self.break_until = None;
                 (OverlayResponse::success_message("Break canceled"), false)
             }
+            ParsedCommand::CloseAll => {
+                let total =
+                    self.rectangles.len() + self.countdowns.len() + self.qrcodes.len();
+                self.rectangles.clear();
+                self.countdowns.clear();
+                self.qrcodes.clear();
+                (
+                    OverlayResponse::success_message(format!("Closed {total} windows")),
+                    total > 0,
+                )
+            }
             other if self.is_break_active(now) => (
                 OverlayResponse::ignored("break_active", "Command discarded during break"),
                 matches!(
@@ -675,5 +686,93 @@ mod tests {
         assert_eq!(response, OverlayResponse::success_window(1));
         assert!(changed);
         assert_eq!(state.qrcodes.len(), 1);
+    }
+
+    #[test]
+    fn close_all_clears_all_window_types() {
+        let now = std::time::Instant::now();
+        let mut state = OverlayState::default();
+
+        let _ = state.execute(
+            ParsedCommand::CreateHighlight {
+                rect: Some([0, 0, 10, 10]),
+                timeout_seconds: 10.0,
+            },
+            now,
+        );
+        let _ = state.execute(
+            ParsedCommand::CreateCountdown {
+                message_text: "cd".to_string(),
+                countdown_seconds: 10.0,
+            },
+            now,
+        );
+        let _ = state.execute(
+            ParsedCommand::CreateQrCodeWindow {
+                data: json!("https://example.com"),
+                duration_seconds: 10.0,
+                caption: "qr".to_string(),
+            },
+            now,
+        );
+
+        assert_eq!(state.rectangles.len(), 1);
+        assert_eq!(state.countdowns.len(), 1);
+        assert_eq!(state.qrcodes.len(), 1);
+
+        let (response, changed) = state.execute(ParsedCommand::CloseAll, now);
+        assert_eq!(
+            response,
+            OverlayResponse::success_message("Closed 3 windows")
+        );
+        assert!(changed);
+        assert!(state.rectangles.is_empty());
+        assert!(state.countdowns.is_empty());
+        assert!(state.qrcodes.is_empty());
+    }
+
+    #[test]
+    fn close_all_bypasses_break_guard() {
+        let now = std::time::Instant::now();
+        let mut state = OverlayState::default();
+
+        let _ = state.execute(
+            ParsedCommand::CreateCountdown {
+                message_text: "test".to_string(),
+                countdown_seconds: 10.0,
+            },
+            now,
+        );
+        let _ = state.execute(
+            ParsedCommand::TakeBreak {
+                duration_seconds: 30.0,
+                duration_display: "30".to_string(),
+            },
+            now,
+        );
+
+        let (response, changed) = state.execute(
+            ParsedCommand::CloseAll,
+            now + Duration::from_millis(100),
+        );
+        assert_eq!(
+            response,
+            OverlayResponse::success_message("Closed 1 windows")
+        );
+        assert!(changed);
+        assert!(state.countdowns.is_empty());
+    }
+
+    #[test]
+    fn close_all_on_empty_state() {
+        let now = std::time::Instant::now();
+        let mut state = OverlayState::default();
+
+        let (response, changed) = state.execute(ParsedCommand::CloseAll, now);
+        assert_eq!(
+            response,
+            OverlayResponse::success_message("Closed 0 windows")
+        );
+        assert!(!changed);
     }
 }

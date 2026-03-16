@@ -53,6 +53,7 @@ pub enum ParsedCommand {
         duration_display: String,
     },
     CancelBreak,
+    CloseAll,
 }
 
 impl ParsedCommand {
@@ -66,6 +67,7 @@ impl ParsedCommand {
             Self::UpdateWindowMessage { .. } => "update_window_message",
             Self::TakeBreak { .. } => "take_break",
             Self::CancelBreak => "cancel_break",
+            Self::CloseAll => "close_all",
         }
     }
 }
@@ -191,6 +193,7 @@ pub fn parse_message(message: &[u8]) -> Result<ParsedCommand, OverlayResponse> {
             duration_display: get_duration_display_or_default(&args, "duration_seconds", "0")?,
         }),
         "cancel_break" => Ok(ParsedCommand::CancelBreak),
+        "close_all" => Ok(ParsedCommand::CloseAll),
         _ => Err(OverlayResponse::error(format!(
             "Unknown command {command_name}"
         ))),
@@ -402,5 +405,11 @@ mod tests {
                 duration_display: "0".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parses_close_all() {
+        let command = parse_message(br#"{"command":"close_all","args":{}}"#).unwrap();
+        assert_eq!(command, ParsedCommand::CloseAll);
     }
 }

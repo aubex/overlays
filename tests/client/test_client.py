@@ -158,6 +158,7 @@ class TestOverlayClient:
             ("update_window_message", (9, "new"), True, {"status": "success"}),
             ("take_break", (12,), True, {"status": "success"}),
             ("cancel_break", (), True, {"status": "success"}),
+            ("close_all_windows", (), True, {"status": "success"}),
             # failure cases
             ("create_countdown_window", ("m", 1), False, {"status": "error"}),
         ],
