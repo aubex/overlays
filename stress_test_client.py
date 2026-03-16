@@ -38,6 +38,7 @@ def configure_logging(level: int = logging.INFO) -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
+
 # Fun randomization constants
 RANDOM_EMOJIS = [
     "🎯",
@@ -896,7 +897,9 @@ class StressTestClient:
         requests_per_second = (
             request_count / total_duration if total_duration > 0 else float("inf")
         )
-        message = f"Success rate: {success_rate:.2%} ({successful_requests}/{request_count})"
+        message = (
+            f"Success rate: {success_rate:.2%} ({successful_requests}/{request_count})"
+        )
         if failure_samples:
             message = f"{message}; sample failures: {', '.join(failure_samples)}"
 
@@ -1049,9 +1052,7 @@ class StressTestClient:
                             f"🔄 Wrapper Update {i + 1}",
                             update_result,
                             random_delay,
-                            ""
-                            if update_result
-                            else f"Failed wrapper update {i + 1}",
+                            "" if update_result else f"Failed wrapper update {i + 1}",
                         )
                     )
 
@@ -1151,7 +1152,9 @@ class StressTestClient:
 
         if self.active_windows:
             print(f"⚠️ Remaining tracked windows: {len(self.active_windows)}")
-            print(f"   IDs: {', '.join(str(window_id) for window_id in self.active_windows)}")
+            print(
+                f"   IDs: {', '.join(str(window_id) for window_id in self.active_windows)}"
+            )
 
         # Show failed tests
         failed_results = [r for r in self.results if not r.success]
