@@ -39,26 +39,33 @@ jobs:
         run: cargo build --release --manifest-path rust/overlays-server/Cargo.toml
       - name: Stage bundled server binary
         run: uv run --dev python scripts/stage_server_binary.py
-      - name: Build wheel
+      - name: Build Windows wheel
+        run: uv build --wheel
+      - name: Build pure-Python wheel
+        shell: powershell
+        env:
+          OVERLAYS_PURE_WHEEL: "1"
         run: uv build --wheel
       - name: Verify wheel contents
         shell: powershell
         run: |
-          $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
-          uv run --dev python scripts/verify_wheel.py $wheel
+          $winWheel = (Get-ChildItem dist\*win_amd64.whl).FullName
+          $pureWheel = (Get-ChildItem dist\*py3-none-any.whl).FullName
+          uv run --dev python scripts/verify_wheel.py $winWheel
+          uv run --dev python scripts/verify_wheel.py $pureWheel --pure
       - name: Smoke test packaged wheel
         shell: powershell
         run: |
-          $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
-          uv run --dev python scripts/smoke_test_wheel.py $wheel
+          $winWheel = (Get-ChildItem dist\*win_amd64.whl).FullName
+          uv run --dev python scripts/smoke_test_wheel.py $winWheel
       - name: Build standalone zip
         run: uv run --dev python scripts/build_release_bundle.py --version ${{ github.ref_name }}
       - name: Write release checksums
         shell: powershell
         run: |
-          $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
+          $wheels = (Get-ChildItem dist\*.whl).FullName
           $zip = Get-ChildItem .tmp-dist\release\*.zip | Select-Object -ExpandProperty FullName
-          uv run --dev python scripts/write_checksums.py --output .tmp-dist\release\SHA256SUMS.txt $wheel $zip
+          uv run --dev python scripts/write_checksums.py --output .tmp-dist\release\SHA256SUMS.txt @($wheels) $zip
       - name: Verify release assets
         shell: powershell
         run: |
@@ -73,9 +80,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
+          $wheels = (Get-ChildItem dist\*.whl).FullName
           $zip = Get-ChildItem .tmp-dist\release\*.zip | Select-Object -ExpandProperty FullName
-          $assets = @($wheel, $zip, ".tmp-dist\release\SHA256SUMS.txt")
+          $assets = @($wheels) + @($zip, ".tmp-dist\release\SHA256SUMS.txt")
           $tag = "${{ github.ref_name }}"
           $existing = gh release list --limit 1000 --json tagName | ConvertFrom-Json | Where-Object { $_.tagName -eq $tag }
           if ($existing) {
@@ -83,8 +90,8 @@ jobs:
           } else {
             gh release create ${{ github.ref_name }} $assets --generate-notes
           }
-      - name: Publish wheel to PyPI
+      - name: Publish wheels to PyPI
         shell: powershell
         run: |
-          $wheel = Get-ChildItem dist\*.whl | Select-Object -ExpandProperty FullName
-          uv publish $wheel -t ${{ secrets.PYPI_TOKEN }} --check-url https://pypi.org/simple/overlays/
+          $wheels = (Get-ChildItem dist\*.whl).FullName
+          uv publish @($wheels) -t ${{ secrets.PYPI_TOKEN }} --check-url https://pypi.org/simple/overlays/

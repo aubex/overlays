@@ -15,6 +15,10 @@ EXPECTED_WHEEL_MARKERS = [
     "Root-Is-Purelib: false",
     "Tag: py3-none-win_amd64",
 ]
+EXPECTED_PURE_WHEEL_MARKERS = [
+    "Root-Is-Purelib: true",
+    "Tag: py3-none-any",
+]
 EXPECTED_LAUNCHER_MARKERS = [
     "process = subprocess.Popen(",
     "except KeyboardInterrupt:",
@@ -29,6 +33,14 @@ def parse_args() -> argparse.Namespace:
         description="Verify that the built wheel contains the bundled server and expected metadata."
     )
     parser.add_argument("wheel", type=Path, help="Path to the built wheel")
+    parser.add_argument(
+        "--pure",
+        action="store_true",
+        help=(
+            "Verify the pure-Python (py3-none-any) wheel instead: the launcher "
+            "and entry points must be present but the server binary must be absent."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -49,7 +61,12 @@ def main() -> int:
 
     with zipfile.ZipFile(wheel_path) as archive:
         names = archive.namelist()
-        if EXPECTED_EXE not in names:
+        if args.pure:
+            if EXPECTED_EXE in names:
+                raise RuntimeError(
+                    f"Pure wheel must not bundle the server binary: {EXPECTED_EXE}"
+                )
+        elif EXPECTED_EXE not in names:
             raise RuntimeError(
                 f"Wheel is missing bundled server binary: {EXPECTED_EXE}"
             )
@@ -72,7 +89,10 @@ def main() -> int:
 
         wheel_metadata_name = find_dist_info_member(names, "WHEEL")
         wheel_metadata = archive.read(wheel_metadata_name).decode("utf-8")
-        for marker in EXPECTED_WHEEL_MARKERS:
+        expected_markers = (
+            EXPECTED_PURE_WHEEL_MARKERS if args.pure else EXPECTED_WHEEL_MARKERS
+        )
+        for marker in expected_markers:
             if marker not in wheel_metadata:
                 raise RuntimeError(f"Wheel metadata is missing marker: {marker}")
 

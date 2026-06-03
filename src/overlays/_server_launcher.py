@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 from contextlib import contextmanager
 from importlib import resources
 from pathlib import Path
@@ -21,6 +22,13 @@ class _ConsoleInterrupt(Exception):
 
 @contextmanager
 def bundled_server_path() -> Iterator[Path]:
+    if sys.platform != "win32":
+        raise RuntimeError(
+            "The overlays server is Windows-only and is not bundled in the "
+            "pure-Python wheel installed on this platform. The overlays client "
+            "still works as a no-op here; run the server on Windows."
+        )
+
     resource = resources.files(_PACKAGE_NAME).joinpath(_SERVER_EXE)
     if not resource.is_file():
         raise FileNotFoundError(
