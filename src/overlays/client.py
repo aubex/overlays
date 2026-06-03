@@ -2,12 +2,20 @@ import json
 import logging
 import time
 import os
+import sys
 from types import TracebackType
 from typing import Any, Self
 
-import pywintypes
-import win32file
-import win32pipe
+_IS_WINDOWS = sys.platform == "win32"
+
+if _IS_WINDOWS:
+    import pywintypes
+    import win32file
+    import win32pipe
+else:  # pragma: no cover - exercised only on non-Windows platforms
+    pywintypes = None  # type: ignore[assignment]
+    win32file = None  # type: ignore[assignment]
+    win32pipe = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +63,15 @@ class OverlayClient:
 
     def _connect(self) -> None:
         """Connect to the named pipe server."""
+        if not _IS_WINDOWS:
+            self.server_available = False
+            self.pipe_handle = None
+            logger.debug(
+                "Overlay client is disabled on non-Windows platforms; "
+                "overlay commands will be ignored."
+            )
+            return
+
         try:
             # Wait for pipe to become available
             win32pipe.WaitNamedPipe(self.pipe_name, self.timeout)
