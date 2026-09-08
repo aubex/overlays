@@ -1,8 +1,9 @@
 import json
 import logging
-import time
 import os
 import sys
+import threading
+import time
 from types import TracebackType
 from typing import Any, Self
 
@@ -10,14 +11,37 @@ _IS_WINDOWS = sys.platform == "win32"
 
 if _IS_WINDOWS:
     import pywintypes
+    import win32event
     import win32file
     import win32pipe
+    import winerror
 else:  # pragma: no cover - exercised only on non-Windows platforms
     pywintypes = None  # type: ignore[assignment]
+    win32event = None  # type: ignore[assignment]
     win32file = None  # type: ignore[assignment]
     win32pipe = None  # type: ignore[assignment]
+    winerror = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TIMEOUT_MS = 5000
+
+# Largest response the client accepts; matches the server's pipe buffer size.
+_RESPONSE_BUFFER_SIZE = 65_536
+
+# After a failed connection attempt a client instance waits this long before it
+# probes the pipe again, so callers holding an instance do not pay for a probe on
+# every overlay call while the server is down.
+_RECONNECT_COOLDOWN_SECONDS = 1.0
+
+# A server that accepts connections but never answers is expensive to probe: each
+# probe costs a full timeout. Such pipes are paused with exponential backoff.
+_UNRESPONSIVE_BACKOFF_INITIAL_SECONDS = 1.0
+_UNRESPONSIVE_BACKOFF_MAX_SECONDS = 30.0
+
+# Win32 errors that mean "this pipe connection is gone": invalid handle, broken pipe,
+# pipe being closed, pipe not connected, operation aborted.
+_CONNECTION_LOST_ERRORS = frozenset({6, 109, 232, 233, 995})
 
 _server_unavailable_warning_emitted = False
 
@@ -38,20 +62,163 @@ def _reset_server_unavailable_warning() -> None:
     _server_unavailable_warning_emitted = False
 
 
+_backoff_lock = threading.Lock()
+# pipe path -> (monotonic time until which connects are skipped, last delay in seconds)
+_unresponsive_backoff: dict[str, tuple[float, float]] = {}
+
+
+def _unresponsive_backoff_active(pipe_path: str) -> bool:
+    with _backoff_lock:
+        entry = _unresponsive_backoff.get(pipe_path)
+    return entry is not None and time.monotonic() < entry[0]
+
+
+def _register_unresponsive(pipe_path: str) -> float:
+    """Record that the server on ``pipe_path`` accepted a request but never answered."""
+    with _backoff_lock:
+        entry = _unresponsive_backoff.get(pipe_path)
+        if entry is None:
+            delay = _UNRESPONSIVE_BACKOFF_INITIAL_SECONDS
+        else:
+            delay = min(entry[1] * 2, _UNRESPONSIVE_BACKOFF_MAX_SECONDS)
+        _unresponsive_backoff[pipe_path] = (time.monotonic() + delay, delay)
+    return delay
+
+
+def _clear_unresponsive_backoff(pipe_path: str) -> None:
+    with _backoff_lock:
+        _unresponsive_backoff.pop(pipe_path, None)
+
+
+def _reset_backoff_state() -> None:
+    """Forget every recorded outage. Intended for tests."""
+    with _backoff_lock:
+        _unresponsive_backoff.clear()
+
+
+class _PipeTimeout(Exception):
+    """The deadline passed before the pipe operation completed."""
+
+
+class _PipeAborted(Exception):
+    """The pending pipe operation was aborted by ``OverlayClient.disconnect()``."""
+
+
+class _PipeConnection:
+    """One client handle to the overlay pipe, driven with overlapped (asynchronous) I/O.
+
+    Every read and write is bounded by a deadline and can additionally be aborted from
+    another thread. A cancelled operation is always waited for, so the kernel never
+    writes into a buffer Python has already released.
+    """
+
+    def __init__(self, handle: Any) -> None:
+        self.handle = handle
+        self._io_event = win32event.CreateEvent(None, True, False, None)
+        self._abort_event = win32event.CreateEvent(None, True, False, None)
+        self._overlapped = pywintypes.OVERLAPPED()
+        self._overlapped.hEvent = self._io_event
+
+    @classmethod
+    def open(cls, pipe_path: str, timeout_ms: int) -> Self:
+        """Connect to ``pipe_path``; raises ``pywintypes.error`` when that fails."""
+        win32pipe.WaitNamedPipe(pipe_path, max(1, timeout_ms))
+        handle = win32file.CreateFile(
+            pipe_path,
+            win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+            0,
+            None,
+            win32file.OPEN_EXISTING,
+            win32file.FILE_FLAG_OVERLAPPED,
+            None,
+        )
+        try:
+            win32pipe.SetNamedPipeHandleState(
+                handle, win32pipe.PIPE_READMODE_MESSAGE, None, None
+            )
+        except pywintypes.error:
+            win32file.CloseHandle(handle)
+            raise
+        return cls(handle)
+
+    def send(self, payload: bytes, deadline: float) -> None:
+        win32event.ResetEvent(self._io_event)
+        rc, _ = win32file.WriteFile(self.handle, payload, self._overlapped)
+        written = self._complete(rc, deadline)
+        if written != len(payload):
+            raise pywintypes.error(
+                winerror.ERROR_NO_DATA, "WriteFile", "incomplete pipe write"
+            )
+
+    def receive(self, deadline: float) -> bytes:
+        win32event.ResetEvent(self._io_event)
+        buffer = win32file.AllocateReadBuffer(_RESPONSE_BUFFER_SIZE)
+        rc, buffer = win32file.ReadFile(self.handle, buffer, self._overlapped)
+        count = self._complete(rc, deadline)
+        return bytes(buffer[:count])
+
+    def abort(self) -> None:
+        """Wake up a thread blocked in ``send``/``receive``; safe from any thread."""
+        win32event.SetEvent(self._abort_event)
+
+    def close(self) -> None:
+        handle, self.handle = self.handle, None
+        for resource in (handle, self._io_event, self._abort_event):
+            if resource is None:
+                continue
+            try:
+                win32file.CloseHandle(resource)
+            except (pywintypes.error, OSError) as exc:
+                logger.debug("Error closing pipe resource: %s", exc)
+        self._io_event = None
+        self._abort_event = None
+
+    def _complete(self, rc: int, deadline: float) -> int:
+        if rc == winerror.ERROR_IO_PENDING:
+            remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+            waited = win32event.WaitForMultipleObjects(
+                [self._io_event, self._abort_event],
+                False,
+                min(remaining_ms, 0xFFFFFFFE),
+            )
+            if waited != win32event.WAIT_OBJECT_0:
+                self._cancel_pending_io()
+                if waited == win32event.WAIT_TIMEOUT:
+                    raise _PipeTimeout
+                raise _PipeAborted
+        return win32file.GetOverlappedResult(self.handle, self._overlapped, True)
+
+    def _cancel_pending_io(self) -> None:
+        try:
+            win32file.CancelIo(self.handle)
+        except pywintypes.error:
+            pass
+        try:
+            # Block until the cancelled operation has really completed.
+            win32file.GetOverlappedResult(self.handle, self._overlapped, True)
+        except pywintypes.error:
+            pass
+
+
 class OverlayClient:
     """
     Client for communicating with the overlay server via named pipe.
-    Can be used from a separate Python process.
+    Can be used from a separate Python process and shared between threads.
     Gracefully handles cases where the server is unavailable.
+
+    Every call returns within ``timeout`` milliseconds. That budget covers waiting
+    for a concurrent call on the same instance, connecting, sending the command and
+    receiving the answer. A server that does not answer in time is treated as gone:
+    the connection is dropped, so its late answer can never be delivered to a later
+    call, and the client reconnects lazily with a backoff.
     """
 
-    def __init__(self, timeout: int = 5000) -> None:
+    def __init__(self, timeout: int = DEFAULT_TIMEOUT_MS) -> None:
         """
         Initialize the OverlayClient.
 
         Args:
-            pipe_name (str): Name of the pipe to connect to
-            timeout (int): Connection timeout in milliseconds
+            timeout (int): Upper bound in milliseconds for each client call.
 
         """
         pipe_name = os.environ.get("OVERLAY_PIPE_NAME", "overlay_manager")
@@ -59,10 +226,14 @@ class OverlayClient:
         self.timeout = timeout
         self.pipe_handle = None
         self.server_available = False
+        self._connection: _PipeConnection | None = None
+        self._lock = threading.Lock()
+        self._closed = False
+        self._retry_at = 0.0
         self._connect()
 
-    def _connect(self) -> None:
-        """Connect to the named pipe server."""
+    def _connect(self, timeout_ms: int | None = None) -> None:
+        """Connect to the named pipe server, waiting at most ``timeout_ms``."""
         if not _IS_WINDOWS:
             self.server_available = False
             self.pipe_handle = None
@@ -72,30 +243,21 @@ class OverlayClient:
             )
             return
 
-        try:
-            # Wait for pipe to become available
-            win32pipe.WaitNamedPipe(self.pipe_name, self.timeout)
-
-            # Open the pipe
-            self.pipe_handle = win32file.CreateFile(
+        if _unresponsive_backoff_active(self.pipe_name):
+            self.server_available = False
+            self.pipe_handle = None
+            logger.debug(
+                "Skipping connection to overlay server on pipe %s while it is paused "
+                "after not answering.",
                 self.pipe_name,
-                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
-                0,
-                None,
-                win32file.OPEN_EXISTING,
-                0,
-                None,
             )
+            return
 
-            # Set pipe mode
-            win32pipe.SetNamedPipeHandleState(
-                self.pipe_handle, win32pipe.PIPE_READMODE_MESSAGE, None, None
-            )
+        if timeout_ms is None:
+            timeout_ms = self.timeout
 
-            self.server_available = True
-            _reset_server_unavailable_warning()
-            logger.info("Connected to overlay server pipe")
-
+        try:
+            connection = _PipeConnection.open(self.pipe_name, timeout_ms)
         except pywintypes.error as e:
             self.server_available = False
             self.pipe_handle = None
@@ -106,61 +268,120 @@ class OverlayClient:
                 "Overlay server not available on pipe %s; overlay commands will be ignored until it is running.",
                 self.pipe_name,
             )
+            return
+
+        self._connection = connection
+        self.pipe_handle = connection.handle
+        self.server_available = True
+        _reset_server_unavailable_warning()
+        logger.info("Connected to overlay server pipe")
+
+    def _ensure_connected(self, deadline: float) -> bool:
+        """Reconnect lazily if needed; returns whether a connection is available."""
+        if self._connection is not None:
+            return True
+        if self._closed:
+            return False
+
+        now = time.monotonic()
+        if now < self._retry_at:
+            return False
+
+        remaining_ms = max(0, int((deadline - now) * 1000))
+        self._connect(min(self.timeout, remaining_ms))
+        if self._connection is None:
+            self._retry_at = time.monotonic() + _RECONNECT_COOLDOWN_SECONDS
+            return False
+        return True
 
     def _send_command(
         self, command: str, args: dict[str, Any] | None = None
     ) -> dict[str, Any]:
         """
         Send a command to the overlay server and return the response.
-        Returns empty success response if server unavailable.
+        Returns an "ignored" response if the server is unavailable, busy or silent.
 
         Args:
             command (str): Command name
             args (Dict[str, Any]): Command arguments
 
         Returns:
-            Dict[str, Any]: Response from the server or empty dict if unavailable
+            Dict[str, Any]: Response from the server or an ignored response
 
         """
-        if not self.server_available or not self.pipe_handle:
-            _warn_server_unavailable_once(
-                "Ignoring overlay command '%s' because the server is not available on pipe %s.",
+        deadline = time.monotonic() + self.timeout / 1000.0
+
+        if not self._lock.acquire(timeout=max(0.0, deadline - time.monotonic())):
+            logger.debug(
+                "Ignoring overlay command '%s' because another overlay call on pipe %s "
+                "is still in progress.",
                 command,
                 self.pipe_name,
             )
-            return {"status": "ignored", "reason": "server_unavailable"}
-
-        # Prepare command data
-        command_data = {"command": command, "args": args or {}}
+            return {"status": "ignored", "reason": "busy"}
 
         try:
-            # Send command
-            message = json.dumps(command_data).encode("utf-8")
-            win32file.WriteFile(self.pipe_handle, message)
+            if not self._ensure_connected(deadline):
+                _warn_server_unavailable_once(
+                    "Ignoring overlay command '%s' because the server is not available on pipe %s.",
+                    command,
+                    self.pipe_name,
+                )
+                return {"status": "ignored", "reason": "server_unavailable"}
 
-            # Read response
-            result, data = win32file.ReadFile(self.pipe_handle, 65536)
-            if result == 0 and data:
-                return json.loads(data.decode("utf-8"))
+            connection = self._connection
+            message = json.dumps({"command": command, "args": args or {}}).encode(
+                "utf-8"
+            )
 
-            # Connection lost
-            self._handle_connection_lost(command)
+            try:
+                connection.send(message, deadline)
+                data = connection.receive(deadline)
+            except _PipeTimeout:
+                self._handle_unresponsive(command)
+                return {"status": "ignored", "reason": "timeout"}
+            except _PipeAborted:
+                self._drop_connection()
+                logger.debug(
+                    "Overlay command '%s' was aborted because the client disconnected.",
+                    command,
+                )
+                return {"status": "ignored", "reason": "disconnected"}
+            except pywintypes.error as e:
+                if e.winerror in _CONNECTION_LOST_ERRORS:
+                    self._handle_connection_lost(command)
+                    return {"status": "ignored", "reason": "connection_lost"}
+                logger.debug("Error sending command '%s': %s", command, e)
+                self._drop_connection()
+                return {"status": "ignored", "reason": "communication_error"}
 
-        except pywintypes.error as e:
-            if e.winerror in [109, 232]:  # Broken pipe or no data
+            if not data:
                 self._handle_connection_lost(command)
                 return {"status": "ignored", "reason": "connection_lost"}
-            msg = f"Error sending command '{command}': {e}"
-            logger.debug(msg)
-            return {"status": "ignored", "reason": "communication_error"}
 
-        except json.JSONDecodeError as e:
-            msg = f"Invalid response from server for command '{command}': {e}"
-            logger.debug(msg)
-            return {"status": "ignored", "reason": "invalid_response"}
+            try:
+                response = json.loads(data.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.debug(
+                    "Invalid response from server for command '%s': %s", command, e
+                )
+                # The stream is out of step; start over with a fresh connection.
+                self._drop_connection()
+                return {"status": "ignored", "reason": "invalid_response"}
 
-        else:
-            return {"status": "ignored", "reason": "connection_lost"}
+            _clear_unresponsive_backoff(self.pipe_name)
+            self._retry_at = 0.0
+            return response
+        finally:
+            self._lock.release()
+
+    def _drop_connection(self) -> None:
+        """Close the pipe handle and mark the server as unavailable."""
+        connection, self._connection = self._connection, None
+        self.pipe_handle = None
+        self.server_available = False
+        if connection is not None:
+            connection.close()
 
     def _handle_connection_lost(self, command: str | None = None) -> None:
         """Handle lost connection by marking server as unavailable."""
@@ -175,8 +396,20 @@ class OverlayClient:
                 self.pipe_name,
                 command,
             )
-        self.server_available = False
-        self.pipe_handle = None
+        self._drop_connection()
+
+    def _handle_unresponsive(self, command: str) -> None:
+        """Handle a server that accepted a command but did not answer in time."""
+        delay = _register_unresponsive(self.pipe_name)
+        _warn_server_unavailable_once(
+            "Overlay server on pipe %s did not answer '%s' within %d ms; dropping the "
+            "connection and pausing overlay commands for %.0f s.",
+            self.pipe_name,
+            command,
+            self.timeout,
+            delay,
+        )
+        self._drop_connection()
 
     def create_countdown_window(
         self, message_text: str, countdown_seconds: int = 3
@@ -339,17 +572,22 @@ class OverlayClient:
         return self.server_available and self.pipe_handle is not None
 
     def disconnect(self) -> None:
-        """Disconnect from the pipe server."""
-        if self.pipe_handle:
-            try:
-                win32file.CloseHandle(self.pipe_handle)
-            except (pywintypes.error, OSError) as e:
-                # Log the specific error but continue cleanup
-                msg = f"Error closing pipe handle: {e}"
-                logger.debug(msg)
-            self.pipe_handle = None
+        """Disconnect from the pipe server and stop reconnecting.
 
-        self.server_available = False
+        Safe to call from any thread: a call in progress on another thread is
+        aborted and returns an "ignored" response.
+        """
+        self._closed = True
+        connection = self._connection
+        if connection is not None:
+            connection.abort()
+
+        acquired = self._lock.acquire(timeout=self.timeout / 1000.0 + 1.0)
+        try:
+            self._drop_connection()
+        finally:
+            if acquired:
+                self._lock.release()
         logger.debug("Disconnected from overlay server pipe")
 
     def __enter__(self) -> Self:
@@ -440,13 +678,16 @@ class RemoteElapsedTimeWindow:
 
 
 _overlay_client: OverlayClient | None = None
+_overlay_client_lock = threading.Lock()
 
 
-def get_overlay_client(timeout: int = 5000) -> OverlayClient:
+def get_overlay_client(timeout: int = DEFAULT_TIMEOUT_MS) -> OverlayClient:
+    """Return the shared client, creating a new one while the current one is unusable."""
     global _overlay_client  # noqa: PLW0603
-    if _overlay_client is None or not _overlay_client.is_available():
-        _overlay_client = OverlayClient(timeout=timeout)
-    return _overlay_client
+    with _overlay_client_lock:
+        if _overlay_client is None or not _overlay_client.is_available():
+            _overlay_client = OverlayClient(timeout=timeout)
+        return _overlay_client
 
 
 if __name__ == "__main__":

@@ -77,6 +77,11 @@ uv run ruff format
 - Provides methods like `create_highlight_window()`, `create_countdown_window()`, etc.
 - Returns window IDs that can be used to update/close windows
 - Includes `get_overlay_client()` singleton helper for reusing connections
+- Is safe to share between threads: one request is in flight per instance (lock), and
+  every call returns within `timeout` ms (lock wait + connect + write + read)
+- Uses overlapped named-pipe I/O so a stalled read/write can be cancelled; a server that
+  does not answer in time is dropped (no late answer can reach a later call) and paused
+  with exponential backoff; reconnection happens lazily on the next call
 
 ### Named Pipe Communication
 
@@ -84,7 +89,8 @@ uv run ruff format
 - Full pipe path format: `\\.\pipe\{OVERLAY_PIPE_NAME}`
 - Client sends JSON commands with structure: `{"command": "create_highlight", "args": {...}}`
 - Server responds with JSON: `{"status": "success", "window_id": 1}` or error messages
-- Communication is synchronous from the Python client's perspective
+- Communication is synchronous from the Python client's perspective, but bounded:
+  a call never blocks longer than the client's `timeout`
 
 ### Rust Server Layout
 
@@ -98,6 +104,8 @@ uv run ruff format
 
 Python tests focus on client behavior and client-to-server compatibility:
 - `tests/client/test_client.py`: unit tests for the Python client API
+- `tests/client/test_client_robustness.py`: concurrency, silent server, pipe break and
+  recovery scenarios, driven by `tests/client/fake_pipe_server.py`
 - `tests/rust_server/test_rust_server_compat.py`: boots the Rust server binary and verifies protocol compatibility through the Python client
 
 Rust tests cover server behavior directly:

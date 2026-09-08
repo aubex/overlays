@@ -4,7 +4,6 @@ from unittest.mock import Mock
 import overlays.client as client_module
 import pytest
 import pywintypes
-import win32file
 
 # Replace 'overlay_client_module' with the actual module name where OverlayClient is defined
 from overlays.client import (
@@ -12,6 +11,42 @@ from overlays.client import (
     RemoteElapsedTimeWindow,
     get_overlay_client,
 )
+
+
+class FakeConnection:
+    """Stands in for the overlapped pipe connection inside _send_command tests."""
+
+    def __init__(self, responses=(), send_error=None, receive_error=None):
+        self.handle = "HANDLE"
+        self.responses = list(responses)
+        self.send_error = send_error
+        self.receive_error = receive_error
+        self.sent = []
+        self.closed = False
+        self.aborted = False
+
+    def send(self, payload, deadline):
+        if self.send_error is not None:
+            raise self.send_error
+        self.sent.append(payload)
+
+    def receive(self, deadline):
+        if self.receive_error is not None:
+            raise self.receive_error
+        return self.responses.pop(0)
+
+    def abort(self):
+        self.aborted = True
+
+    def close(self):
+        self.closed = True
+
+
+def attach(client, connection):
+    client._connection = connection
+    client.pipe_handle = connection.handle
+    client.server_available = True
+    return connection
 
 
 class TestOverlayClient:
@@ -31,7 +66,9 @@ class TestOverlayClient:
     @pytest.fixture
     def unavailable_client(self, monkeypatch):
         # Stub _connect to simulate no server
-        monkeypatch.setattr(OverlayClient, "_connect", lambda self: None)
+        monkeypatch.setattr(
+            OverlayClient, "_connect", lambda self, timeout_ms=None: None
+        )
         client = OverlayClient()
         client.server_available = False
         client.pipe_handle = None
@@ -40,7 +77,7 @@ class TestOverlayClient:
     @pytest.fixture
     def available_client(self, monkeypatch):
         # Stub _connect to simulate server available
-        def fake_connect(self):
+        def fake_connect(self, timeout_ms=None):
             self.server_available = True
             self.pipe_handle = "HANDLE"
 
@@ -50,7 +87,7 @@ class TestOverlayClient:
     def test_init_sets_defaults_and_calls_connect(self, monkeypatch):
         called = False
 
-        def fake_connect(self):
+        def fake_connect(self, timeout_ms=None):
             nonlocal called
             called = True
             self.server_available = True
@@ -99,35 +136,76 @@ class TestOverlayClient:
             "on pipe \\\\.\\pipe\\overlay_manager."
         ]
 
-    def test_send_command_success(self, available_client, monkeypatch):
-        # Mock WriteFile and ReadFile
-        monkeypatch.setattr(win32file, "WriteFile", lambda h, msg: None)
-        monkeypatch.setattr(
-            win32file, "ReadFile", lambda h, sz: (0, b'{"status":"success","data":123}')
+    def test_send_command_success(self, available_client):
+        connection = attach(
+            available_client, FakeConnection([b'{"status":"success","data":123}'])
         )
 
         resp = available_client._send_command("test", {"a": 2})
         assert resp == {"status": "success", "data": 123}
+        assert connection.sent == [b'{"command": "test", "args": {"a": 2}}']
+        assert not connection.closed
+        assert available_client.is_available()
 
-    def test_send_command_broken_pipe(self, available_client, monkeypatch):
-        # Simulate WriteFile raising broken pipe error
-        def fake_write(h, msg):
-            raise pywintypes.error(109, "WriteFile", "Broken")
-
-        monkeypatch.setattr(win32file, "WriteFile", fake_write)
+    @pytest.mark.parametrize("winerror_code", [6, 109, 232, 233, 995])
+    def test_send_command_connection_lost(self, available_client, winerror_code):
+        connection = attach(
+            available_client,
+            FakeConnection(
+                send_error=pywintypes.error(winerror_code, "WriteFile", "Broken")
+            ),
+        )
 
         resp = available_client._send_command("cmd", {})
         assert resp == {"status": "ignored", "reason": "connection_lost"}
         assert not available_client.server_available
         assert available_client.pipe_handle is None
+        assert connection.closed
 
-    def test_send_command_broken_pipe_logs_warning(
-        self, available_client, monkeypatch, caplog
+    def test_send_command_other_error_drops_connection(self, available_client):
+        connection = attach(
+            available_client,
+            FakeConnection(send_error=pywintypes.error(87, "WriteFile", "Invalid")),
+        )
+
+        resp = available_client._send_command("cmd", {})
+        assert resp == {"status": "ignored", "reason": "communication_error"}
+        assert connection.closed
+        assert not available_client.is_available()
+
+    def test_send_command_timeout_drops_connection_and_pauses_pipe(
+        self, available_client, caplog
     ):
-        def fake_write(h, msg):
-            raise pywintypes.error(109, "WriteFile", "Broken")
+        connection = attach(
+            available_client,
+            FakeConnection(receive_error=client_module._PipeTimeout()),
+        )
 
-        monkeypatch.setattr(win32file, "WriteFile", fake_write)
+        with caplog.at_level(logging.WARNING):
+            resp = available_client._send_command("cmd", {})
+
+        assert resp == {"status": "ignored", "reason": "timeout"}
+        assert connection.closed
+        assert not available_client.is_available()
+        assert client_module._unresponsive_backoff_active(available_client.pipe_name)
+        assert [record.message for record in caplog.records] == [
+            "Overlay server on pipe \\\\.\\pipe\\overlay_manager did not answer 'cmd' "
+            "within 5000 ms; dropping the connection and pausing overlay commands "
+            "for 1 s."
+        ]
+
+    def test_send_command_empty_response_is_connection_lost(self, available_client):
+        connection = attach(available_client, FakeConnection([b""]))
+
+        resp = available_client._send_command("cmd", {})
+        assert resp == {"status": "ignored", "reason": "connection_lost"}
+        assert connection.closed
+
+    def test_send_command_broken_pipe_logs_warning(self, available_client, caplog):
+        attach(
+            available_client,
+            FakeConnection(send_error=pywintypes.error(109, "WriteFile", "Broken")),
+        )
 
         with caplog.at_level(logging.WARNING):
             available_client._send_command("cmd", {})
@@ -139,12 +217,61 @@ class TestOverlayClient:
             "until it is running again."
         ]
 
-    def test_send_command_invalid_json_response(self, available_client, monkeypatch):
-        monkeypatch.setattr(win32file, "WriteFile", lambda h, m: None)
-        monkeypatch.setattr(win32file, "ReadFile", lambda h, sz: (0, b"not json"))
+    def test_send_command_invalid_json_response(self, available_client):
+        connection = attach(available_client, FakeConnection([b"not json"]))
 
         resp = available_client._send_command("cmd", {})
         assert resp == {"status": "ignored", "reason": "invalid_response"}
+        # A garbled stream cannot be trusted any more; the connection is dropped.
+        assert connection.closed
+        assert not available_client.is_available()
+
+    def test_send_command_reconnects_lazily_when_disconnected(
+        self, available_client, monkeypatch
+    ):
+        available_client._drop_connection()
+        assert not available_client.is_available()
+
+        def reconnect(self, timeout_ms=None):
+            attach(self, FakeConnection([b'{"status":"success"}']))
+
+        monkeypatch.setattr(OverlayClient, "_connect", reconnect)
+        assert available_client._send_command("cmd", {}) == {"status": "success"}
+        assert available_client.is_available()
+
+    def test_send_command_does_not_reconnect_after_disconnect(
+        self, available_client, monkeypatch
+    ):
+        available_client.disconnect()
+        reconnects = []
+        monkeypatch.setattr(
+            OverlayClient,
+            "_connect",
+            lambda self, timeout_ms=None: reconnects.append(timeout_ms),
+        )
+
+        resp = available_client._send_command("cmd", {})
+        assert resp == {"status": "ignored", "reason": "server_unavailable"}
+        assert reconnects == []
+
+    def test_send_command_honours_reconnect_cooldown(
+        self, unavailable_client, monkeypatch
+    ):
+        attempts = []
+        monkeypatch.setattr(
+            OverlayClient,
+            "_connect",
+            lambda self, timeout_ms=None: attempts.append(timeout_ms),
+        )
+
+        unavailable_client._send_command("first", {})
+        unavailable_client._send_command("second", {})
+        assert len(attempts) == 1
+
+        monkeypatch.setattr(client_module, "_RECONNECT_COOLDOWN_SECONDS", 0.0)
+        unavailable_client._retry_at = 0.0
+        unavailable_client._send_command("third", {})
+        assert len(attempts) == 2
 
     def test_handle_connection_lost(self, available_client):
         available_client.server_available = True
@@ -208,25 +335,20 @@ class TestOverlayClient:
         assert not unavailable_client.is_available()
         assert available_client.is_available()
 
-    def test_disconnect_handles_closehandle(self, available_client, monkeypatch):
-        # Test normal CloseHandle
-        available_client.pipe_handle = "H"
-        available_client.server_available = True
-        monkeypatch.setattr(win32file, "CloseHandle", lambda h: None)
+    def test_disconnect_closes_connection(self, available_client):
+        connection = attach(available_client, FakeConnection())
         available_client.disconnect()
+        assert connection.aborted
+        assert connection.closed
         assert available_client.pipe_handle is None
         assert not available_client.server_available
+        assert not available_client.is_available()
 
-    def test_disconnect_raises_error(self, available_client, monkeypatch):
-        # Test CloseHandle raising
+    def test_disconnect_without_connection_is_safe(self, available_client):
         available_client.pipe_handle = "H"
         available_client.server_available = True
 
-        def fake_close(h):
-            raise pywintypes.error(1, "CloseHandle", "err")
-
-        monkeypatch.setattr(win32file, "CloseHandle", fake_close)
-        # Should not raise
+        # Should not raise even though no real connection object exists
         available_client.disconnect()
         assert available_client.pipe_handle is None
         assert not available_client.server_available

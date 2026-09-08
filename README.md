@@ -63,6 +63,13 @@ overlay.take_break(duration_seconds=60)
 overlay.cancel_break()
 ```
 
+The client is fire-and-forget from the caller's point of view: every call returns within
+`timeout` milliseconds (default 5000), whether the server is missing, busy or silent, and
+reports failures through its return value instead of raising. One `OverlayClient` may be
+shared between threads; calls are serialized per instance so answers are never mixed up.
+A server that stops answering is dropped and re-contacted lazily with a backoff, so a
+broken status display never stalls the application that drives it.
+
 ## Development
 
 Development requires Rust stable in addition to Python.

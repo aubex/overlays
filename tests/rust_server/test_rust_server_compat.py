@@ -184,3 +184,50 @@ def test_rust_server_close_all_clears_windows(monkeypatch):
         assert close_second["status"] == "error"
 
         client.disconnect()
+
+
+def test_rust_server_shared_client_serves_concurrent_threads(monkeypatch):
+    """One client instance shared by several threads must never mix up answers."""
+    import threading
+
+    pipe_name = f"overlay_manager_pytest_{uuid.uuid4().hex}"
+    with running_server(pipe_name):
+        monkeypatch.setenv("OVERLAY_PIPE_NAME", pipe_name)
+        client = OverlayClient(timeout=5000)
+        assert client.is_available()
+
+        failures: list[str] = []
+        window_ids: list[int] = []
+        lock = threading.Lock()
+
+        def worker(name: str) -> None:
+            for index in range(20):
+                label = f"{name}-{index}"
+                window_id = client.create_elapsed_time_window(label)
+                if not isinstance(window_id, int):
+                    failures.append(f"{label}: create returned {window_id!r}")
+                    continue
+                with lock:
+                    window_ids.append(window_id)
+                if not client.create_highlight_window((10, 10, 200, 200), 1):
+                    failures.append(f"{label}: highlight failed")
+                if not client.update_window_message(window_id, f"{label} updated"):
+                    failures.append(f"{label}: update failed")
+                if not client.close_window(window_id):
+                    failures.append(f"{label}: close failed")
+
+        threads = [
+            threading.Thread(target=worker, args=(name,), daemon=True)
+            for name in ("main", "status", "extra", "more")
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(60.0)
+
+        assert all(not thread.is_alive() for thread in threads)
+        assert failures == []
+        assert len(window_ids) == 80
+        assert len(set(window_ids)) == 80
+
+        client.disconnect()
